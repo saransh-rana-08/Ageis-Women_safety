@@ -1,20 +1,41 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { MotiView, useAnimationState } from "moti";
-import React, { useState } from "react";
-import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Alert, Dimensions, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 const { width } = Dimensions.get("window");
-const BUTTON_SIZE = width / 4 - 12;
+const BTN_SZ = width / 4 - 12;
 
 export default function LockScreen() {
   const router = useRouter();
   const [input, setInput] = useState("0");
   const [result, setResult] = useState<string | null>(null);
 
-  // 🔐 SECRET PIN to unlock the app
-  const SECRET_PIN = "0000";
+  // 🔐 Security State
+  const [storedPin, setStoredPin] = useState<string | null>(null);
+  const [isSetupMode, setIsSetupMode] = useState(false);
+
+  // Load PIN on mount
+  useEffect(() => {
+    checkPin();
+  }, []);
+
+  const checkPin = async () => {
+    try {
+      const pin = await AsyncStorage.getItem("CALCULATOR_PIN");
+      if (pin) {
+        setStoredPin(pin);
+      } else {
+        setIsSetupMode(true);
+        Alert.alert("Set Passcode", "Enter your secret code and press '=' to save it.");
+      }
+    } catch (e) {
+      console.error("Failed to load PIN", e);
+    }
+  };
 
   const shake = useAnimationState({
     from: { translateX: 0 },
@@ -28,7 +49,7 @@ export default function LockScreen() {
     },
   });
 
-  const handlePress = (val: string) => {
+  const handlePress = async (val: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (val === "AC") {
@@ -43,8 +64,27 @@ export default function LockScreen() {
     }
 
     if (val === "=") {
+      // 🆕 SETUP MODE: Save the PIN
+      if (isSetupMode) {
+        if (input.length < 4) {
+          Alert.alert("Too Short", "Passcode must be at least 4 digits.");
+          return;
+        }
+        try {
+          await AsyncStorage.setItem("CALCULATOR_PIN", input);
+          setStoredPin(input);
+          setIsSetupMode(false);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert("Success", "Passcode saved! Remember it.");
+          setInput("0");
+        } catch (e) {
+          Alert.alert("Error", "Could not save passcode.");
+        }
+        return;
+      }
+
       // 🕵️‍♂️ CHECK FOR SECRET UNLOCK CODE
-      if (input === SECRET_PIN) {
+      if (input === storedPin) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace("/login");
         return;
@@ -132,6 +172,9 @@ export default function LockScreen() {
 
       {/* Keypad */}
       <View style={styles.keypad}>
+        {/* 🛠️ TEMP DEBUG BUTTON: Clear Data */}
+
+
         <View style={styles.row}>
           {renderButton("AC", "action")}
           {renderButton("(", "action")}
@@ -195,9 +238,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   button: {
-    width: BUTTON_SIZE,
-    height: BUTTON_SIZE,
-    borderRadius: BUTTON_SIZE / 2,
+    width: BTN_SZ,
+    height: BTN_SZ,
+    borderRadius: BTN_SZ / 2,
     justifyContent: "center",
     alignItems: "center",
   },

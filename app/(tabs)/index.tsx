@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { Audio } from "expo-av";
+import { CameraView } from "expo-camera";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Accelerometer } from "expo-sensors";
@@ -15,19 +16,22 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useVideoSOS } from "../features/videoSOS/useVideoSOS";
 import useVoiceSOS from "../features/voiceSOS/useVoiceSOS";
 
-// 🔁 Update IP here if your Wi-Fi changes
-const API_URL = "http://10.10.181.126:8082/api/sos/trigger";
-const UPDATE_URL = "http://10.10.181.126:8082/api/sos/update-location";
-const CONTACTS_URL = "http://10.10.181.126:8082/api/contacts";
+// Constants
+// Constants
+const BASE_URL = "http://10.10.181.126:8082";
+const API_URL = `${BASE_URL}/api/sos/trigger`;
+const CONTACTS_URL = `${BASE_URL}/api/contacts`;
+const UPDATE_URL = `${BASE_URL}/api/sos/update-location`;
 
-type Contact = {
+interface Contact {
   id: number;
   name: string;
   phoneNumber: string;
   primaryContact: boolean;
-};
+}
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -50,9 +54,68 @@ export default function HomeScreen() {
   const [tracking, setTracking] = useState(false);
   const [intervalId, setIntervalId] = useState<any>(null);
   const [sosId, setSosId] = useState<number | null>(null);
+  const sosIdRef = useRef<number | null>(null); // 🟢 Ref to avoid stale state in callbacks
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null); // 🟢 Ref to avoid stale closure in timeout
+
+  // 📦 Media Uploads Ref for coordinating SMS
+  const mediaUploadsRef = useRef<{
+    audio?: string;
+    video?: string;
+    timer?: any; // Use any to avoid NodeJS vs Browser/RN type conflicts
+    sent?: boolean;
+  }>({});
 
   const THRESHOLD = 2.3; // lower = more sensitive, higher = less
+
+  // 🗣 Voice SOS Hook
+  const { startListening, stopListening, isListening, isModelReady } = useVoiceSOS({
+    onKeywordDetected: async (info: any) => {
+      console.log("🗣 Voice SOS triggered:", info.keyword);
+      // Stop listening immediately to release mic for SOS recording
+      await stopListening();
+      // Trigger Auto SOS
+      triggerAutoSOS();
+    },
+    onAudioRecorded: (uri: string) => {
+      // This is for the continuous listening chunks (optional to upload)
+      // For now, we only upload the main SOS recording.
+      // If you want to upload the trigger phrase audio, do it here.
+      // uploadAudio(uri); 
+    },
+    onError: (err: any) => {
+      console.log("🗣 Voice SOS Error:", err);
+    }
+  });
+
+  // 📹 Video SOS Hook
+  const {
+    cameraRef,
+    isRecording: isVideoRecording,
+    startRecording: startVideoRecording,
+    stopRecording: stopVideoRecording,
+    permission: cameraPermission,
+    requestPermission: requestCameraPermission
+  } = useVideoSOS({
+    onRecordingFinished: (uri) => {
+      uploadVideo(uri);
+    }
+  });
+
+  // Manage Voice Listener based on Tracking state and Screen Focus
+  useFocusEffect(
+    useCallback(() => {
+      // Start listening only if focused AND not tracking
+      if (!tracking) {
+        startListening();
+      }
+
+      // Cleanup: Stop listening when unfocused or when tracking starts
+      return () => {
+        stopListening();
+      };
+    }, [tracking, startListening, stopListening])
+  );
 
   const refreshContacts = async () => {
     try {
@@ -139,7 +202,7 @@ export default function HomeScreen() {
     }
   };
 
-  // 🎙 Start audio recording
+  // 🎙 Start audio recording (for SOS evidence)
   const startRecording = async () => {
     try {
       console.log("🎙 Requesting microphone permission...");
@@ -154,10 +217,26 @@ export default function HomeScreen() {
         playsInSilentModeIOS: true,
       });
 
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      setRecording(recording);
+      let recordingObject = null;
+      for (let i = 0; i < 3; i++) {
+        try {
+          const { recording } = await Audio.Recording.createAsync(
+            Audio.RecordingOptionsPresets.HIGH_QUALITY
+          );
+          recordingObject = recording;
+          break;
+        } catch (e) {
+          console.log(`🎙 Attempt ${i + 1} failed to start recording, retrying...`);
+          await new Promise((resolve) => setTimeout(resolve, 500)); // Wait 500ms
+        }
+      }
+
+      if (!recordingObject) {
+        throw new Error("Failed to start recording after 3 attempts");
+      }
+
+      setRecording(recordingObject);
+      recordingRef.current = recordingObject; // 🟢 Sync Ref
       console.log("🎙 Recording started");
       Alert.alert("Recording Started", "Audio is being recorded for safety.");
     } catch (err) {
@@ -168,15 +247,157 @@ export default function HomeScreen() {
   // 🎙 Stop audio recording
   const stopRecording = async () => {
     try {
-      if (!recording) return;
+      const rec = recordingRef.current; // 🟢 Use Ref
+      if (!rec) return;
       console.log("🎙 Stopping recording...");
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
       console.log("📁 Audio file saved at:", uri);
       setRecording(null);
+      recordingRef.current = null; // 🟢 Clear Ref
+
+      if (uri) {
+        uploadAudio(uri); // 🟢 Upload immediately
+      }
+
       Alert.alert("Recording Saved", "Audio evidence stored locally.");
     } catch (err) {
       console.log("🎙 Stop recording error:", err);
+    }
+  };
+
+  const checkAndSendSMS = async () => {
+    const { audio, video, sent } = mediaUploadsRef.current;
+
+    // If already sent, stop
+    if (sent) return;
+
+    // If both are ready, send immediately
+    if (audio && video) {
+      if (mediaUploadsRef.current.timer) {
+        clearTimeout(mediaUploadsRef.current.timer);
+      }
+      await sendConsolidatedSMS(audio, video);
+      mediaUploadsRef.current.sent = true;
+      return;
+    }
+
+    // If only one is ready, wait a bit for the other
+    if (!mediaUploadsRef.current.timer) {
+      console.log("⏳ Waiting for second media before sending SMS...");
+      mediaUploadsRef.current.timer = setTimeout(async () => {
+        const { audio: finalAudio, video: finalVideo, sent: finalSent } = mediaUploadsRef.current;
+        if (!finalSent) {
+          console.log("⏰ Timeout reached, sending available media SMS.");
+          await sendConsolidatedSMS(finalAudio, finalVideo);
+          mediaUploadsRef.current.sent = true;
+        }
+      }, 5000); // Wait 5 seconds max
+    }
+  };
+
+  const sendConsolidatedSMS = async (audioUrl?: string, videoUrl?: string) => {
+    const isAvailable = await SMS.isAvailableAsync();
+    if (!isAvailable) return;
+
+    let message = `🚨 EMERGENCY EVIDENCE:\n`;
+    if (audioUrl) message += `🎤 Audio: ${audioUrl}\n`;
+    if (videoUrl) message += `📹 Video: ${videoUrl}\n`;
+
+    // Fallback if nothing (shouldn't happen logic-wise but good for safety)
+    if (!audioUrl && !videoUrl) message += "Media upload failed or timed out.";
+
+    const recipients = contacts.length > 0 ? contacts.map((c) => c.phoneNumber) : ["+917906272840"];
+
+    try {
+      console.log("📲 Sending Consolidated SMS...");
+      await SMS.sendSMSAsync(recipients, message);
+    } catch (e) {
+      console.log("❌ SMS Error:", e);
+    }
+  };
+
+  // 📤 Upload Audio Evidence
+  const uploadAudio = async (uri: string) => {
+    const currentSosId = sosIdRef.current; // 🟢 Use Ref
+    if (!currentSosId) {
+      console.log("⚠️ No active SOS ID for audio upload.");
+      return;
+    }
+
+    try {
+      console.log("📤 Uploading audio evidence...", uri);
+      const formData = new FormData();
+      // @ts-ignore
+      formData.append("file", {
+        uri,
+        name: `sos_audio_${Date.now()}.m4a`,
+        type: "audio/m4a",
+      });
+
+      const uploadRes = await axios.post(`${BASE_URL}/api/media/upload`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const audioUrl = uploadRes.data.url;
+      console.log("✅ Audio uploaded:", audioUrl);
+
+      // Update SOS with audio URL
+      await axios.post(UPDATE_URL, {
+        id: currentSosId,
+        mediaUrl: audioUrl,
+        timestamp: new Date().toISOString(),
+      });
+
+      // 🟢 Update Ref and Check SMS
+      mediaUploadsRef.current.audio = audioUrl;
+      checkAndSendSMS();
+
+    } catch (err: any) {
+      console.log("❌ Audio upload failed:", err?.message || err);
+    }
+  };
+
+  // 📹 Upload Video
+  const uploadVideo = async (uri: string) => {
+    const currentSosId = sosIdRef.current; // 🟢 Use Ref
+    if (!currentSosId) {
+      console.log("⚠️ No active SOS ID for video upload.");
+      return;
+    }
+
+    try {
+      console.log("📤 Uploading video...", uri);
+      const formData = new FormData();
+      // @ts-ignore
+      formData.append("file", {
+        uri,
+        name: `sos_video_${Date.now()}.mp4`,
+        type: "video/mp4",
+      });
+
+      const uploadRes = await axios.post(`${BASE_URL}/api/media/upload`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const videoUrl = uploadRes.data.url;
+      console.log("✅ Video uploaded:", videoUrl);
+
+      // Update SOS with video URL
+      await axios.post(UPDATE_URL, {
+        id: currentSosId,
+        mediaUrl: videoUrl,
+        timestamp: new Date().toISOString(),
+      });
+
+      // 🟢 Update Ref and Check SMS
+      mediaUploadsRef.current.video = videoUrl;
+      checkAndSendSMS();
+
+      Alert.alert("Evidence Uploaded", "Video has been securely uploaded.");
+    } catch (err: any) {
+      console.log("❌ Video upload failed:", err?.message || err);
+      Alert.alert("Upload Failed", "Could not upload video evidence.");
     }
   };
 
@@ -211,9 +432,24 @@ export default function HomeScreen() {
 
     setTracking(true);
     setSosId(alertId);
+    sosIdRef.current = alertId; // 🟢 Sync Ref
+
+    // 🔄 Reset Media Uploads Ref
+    mediaUploadsRef.current = {
+      audio: undefined,
+      video: undefined,
+      timer: undefined,
+      sent: false,
+    };
 
     // Start audio recording
     await startRecording();
+    // Start video recording
+    if (cameraPermission?.granted) {
+      startVideoRecording();
+    } else {
+      requestCameraPermission();
+    }
 
     // Start interval
     const id = setInterval(() => {
@@ -221,6 +457,13 @@ export default function HomeScreen() {
     }, 5000); // 5 seconds
 
     setIntervalId(id);
+
+    // 🛑 Safety Timeout: Stop tracking/recording after 20s (buffer for 15s video)
+    // This ensures we don't record indefinitely if camera doesn't stop
+    setTimeout(() => {
+      console.log("⏰ Safety timeout reached. Stopping SOS tracking...");
+      stopTracking();
+    }, 20000);
   };
 
   // 🛑 Stop tracking (interval + audio)
@@ -233,9 +476,15 @@ export default function HomeScreen() {
     }
 
     await stopRecording();
+    stopVideoRecording();
 
-    setSosId(null);
-    setTracking(false); // Update state LAST to avoid race condition with useEffect
+    // Delay clearing ID slightly to allow uploads to read it
+    setTimeout(() => {
+      setSosId(null);
+      sosIdRef.current = null;
+    }, 5000);
+
+    setTracking(false);
 
     Alert.alert("SOS Stopped", "Tracking and recording have been stopped.");
   };
@@ -320,34 +569,7 @@ export default function HomeScreen() {
     }
   };
 
-  // 🗣 Voice SOS Hook
-  const { startListening, stopListening, isListening, isModelReady } = useVoiceSOS({
-    onKeywordDetected: async (info: any) => {
-      console.log("🗣 Voice SOS triggered:", info.keyword);
-      // Stop listening immediately to release mic for SOS recording
-      await stopListening();
-      // Trigger Auto SOS
-      triggerAutoSOS();
-    },
-    onError: (err: any) => {
-      console.log("🗣 Voice SOS Error:", err);
-    }
-  });
 
-  // Manage Voice Listener based on Tracking state and Screen Focus
-  useFocusEffect(
-    useCallback(() => {
-      // Start listening only if focused AND not tracking
-      if (!tracking) {
-        startListening();
-      }
-
-      // Cleanup: Stop listening when unfocused or when tracking starts
-      return () => {
-        stopListening();
-      };
-    }, [tracking, startListening, stopListening])
-  );
 
   const magnitude = Math.sqrt(
     data.x * data.x + data.y * data.y + data.z * data.z
@@ -579,7 +801,19 @@ export default function HomeScreen() {
           </Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+
+
+      {/* Hidden Camera View for Background Recording */}
+      <View style={{ height: 1, width: 1, overflow: 'hidden', opacity: 0 }}>
+        <CameraView
+          ref={cameraRef}
+          style={{ flex: 1 }}
+          mode="video"
+          facing="back"
+          mute={false}
+        />
+      </View>
+    </ScrollView >
   );
 }
 

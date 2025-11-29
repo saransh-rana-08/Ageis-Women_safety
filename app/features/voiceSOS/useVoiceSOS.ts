@@ -24,10 +24,12 @@ interface VoiceSOSOptions {
         confidence: number;
         timestamp: number;
     }) => void;
+    onAudioRecorded?: (uri: string) => void;
     onError?: (error: any) => void;
 }
 
-export default function useVoiceSOS({ onKeywordDetected, onError }: VoiceSOSOptions) {
+export default function useVoiceSOS(options: VoiceSOSOptions) {
+    const { onKeywordDetected, onError } = options;
     const [isListening, setIsListening] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
 
@@ -126,6 +128,10 @@ export default function useVoiceSOS({ onKeywordDetected, onError }: VoiceSOSOpti
             if (uri) {
                 console.log('[VoiceSOS] Processing audio:', uri);
                 await sendAudioToCloud(uri);
+                // 🟢 Callback to parent for upload
+                if (options.onAudioRecorded) {
+                    options.onAudioRecorded(uri);
+                }
             }
 
             // Restart loop if not stopped
@@ -187,6 +193,13 @@ export default function useVoiceSOS({ onKeywordDetected, onError }: VoiceSOSOpti
                     bitsPerSecond: 128000,
                 },
             });
+
+            // 🔴 FIX: Check if stopped during initialization
+            if (shouldStopRef.current) {
+                console.log('[VoiceSOS] Stopped during initialization, unloading...');
+                await recording.stopAndUnloadAsync();
+                return;
+            }
 
             recordingRef.current = recording;
             setIsListening(true);
