@@ -1,30 +1,23 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { Audio } from "expo-av";
-import { CameraView } from "expo-camera";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Accelerometer } from "expo-sensors";
 import * as SMS from "expo-sms";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+  Alert
 } from "react-native";
 import { useVideoSOS } from "../features/videoSOS/useVideoSOS";
 import useVoiceSOS from "../features/voiceSOS/useVoiceSOS";
 
 // Constants
-// Constants
 const BASE_URL = "http://10.10.181.126:8082";
 const API_URL = `${BASE_URL}/api/sos/trigger`;
 const CONTACTS_URL = `${BASE_URL}/api/contacts`;
 const UPDATE_URL = `${BASE_URL}/api/sos/update-location`;
+// 🔊 Media upload backend
+const MEDIA_UPLOAD_URL = `${BASE_URL}/api/media/upload`;
 
 interface Contact {
   id: number;
@@ -37,6 +30,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const [data, setData] = useState({ x: 0, y: 0, z: 0 });
   const [cooldown, setCooldown] = useState(false);
+  const isAutoSendingRef = useRef(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
@@ -57,6 +51,7 @@ export default function HomeScreen() {
   const sosIdRef = useRef<number | null>(null); // 🟢 Ref to avoid stale state in callbacks
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null); // 🟢 Ref to avoid stale closure in timeout
+  const recordingTimerRef = useRef<any>(null); // for 1-minute auto-stop
 
   // 📦 Media Uploads Ref for coordinating SMS
   const mediaUploadsRef = useRef<{
@@ -81,7 +76,7 @@ export default function HomeScreen() {
       // This is for the continuous listening chunks (optional to upload)
       // For now, we only upload the main SOS recording.
       // If you want to upload the trigger phrase audio, do it here.
-      // uploadAudio(uri); 
+      // uploadAudio(uri);
     },
     onError: (err: any) => {
       console.log("🗣 Voice SOS Error:", err);
@@ -168,16 +163,33 @@ export default function HomeScreen() {
       if (intervalId) {
         clearInterval(intervalId);
       }
+
+      // clear recording timer if any
+      if (recordingTimerRef.current) {
+        clearTimeout(recordingTimerRef.current);
+      }
     };
   }, [intervalId]);
 
-  const sendSMSWithLocation = async (latitude: number, longitude: number) => {
+  // 📩 SMS (now can include optional audio URL)
+  const sendSMSWithLocation = async (
+    latitude?: number,
+    longitude?: number,
+    audioUrl?: string
+  ) => {
     console.log("📩 Checking SMS availability...");
     const isAvailable = await SMS.isAvailableAsync();
     console.log("📩 SMS available:", isAvailable);
 
-    const mapsLink = `https://www.google.com/maps?q=${latitude},${longitude}`;
-    const message = `🚨 EMERGENCY! I need help.\nMy Location:\n${mapsLink}`;
+    let mapsPart = "";
+    if (latitude != null && longitude != null) {
+      const mapsLink = `https://www.google.com/maps?q=${latitude},${longitude}`;
+      mapsPart = `\nMy Location:\n${mapsLink}`;
+    }
+
+    const audioPart = audioUrl ? `\nAudio Evidence:\n${audioUrl}` : "";
+
+    const message = `🚨 EMERGENCY! I need help.${mapsPart}${audioPart}`;
 
     const recipients =
       contacts.length > 0
@@ -244,28 +256,6 @@ export default function HomeScreen() {
     }
   };
 
-  // 🎙 Stop audio recording
-  const stopRecording = async () => {
-    try {
-      const rec = recordingRef.current; // 🟢 Use Ref
-      if (!rec) return;
-      console.log("🎙 Stopping recording...");
-      await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      console.log("📁 Audio file saved at:", uri);
-      setRecording(null);
-      recordingRef.current = null; // 🟢 Clear Ref
-
-      if (uri) {
-        uploadAudio(uri); // 🟢 Upload immediately
-      }
-
-      Alert.alert("Recording Saved", "Audio evidence stored locally.");
-    } catch (err) {
-      console.log("🎙 Stop recording error:", err);
-    }
-  };
-
   const checkAndSendSMS = async () => {
     const { audio, video, sent } = mediaUploadsRef.current;
 
@@ -320,42 +310,6 @@ export default function HomeScreen() {
   // 📤 Upload Audio Evidence
   const uploadAudio = async (uri: string) => {
     const currentSosId = sosIdRef.current; // 🟢 Use Ref
-    if (!currentSosId) {
-      console.log("⚠️ No active SOS ID for audio upload.");
-      return;
-    }
-
-    try {
-      console.log("📤 Uploading audio evidence...", uri);
-      const formData = new FormData();
-      // @ts-ignore
-      formData.append("file", {
-        uri,
-        name: `sos_audio_${Date.now()}.m4a`,
-        type: "audio/m4a",
-      });
-
-      const uploadRes = await axios.post(`${BASE_URL}/api/media/upload`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      const audioUrl = uploadRes.data.url;
-      console.log("✅ Audio uploaded:", audioUrl);
-
-      // Update SOS with audio URL
-      await axios.post(UPDATE_URL, {
-        id: currentSosId,
-        mediaUrl: audioUrl,
-        timestamp: new Date().toISOString(),
-      });
-
-      // 🟢 Update Ref and Check SMS
-      mediaUploadsRef.current.audio = audioUrl;
-      checkAndSendSMS();
-
-    } catch (err: any) {
-      console.log("❌ Audio upload failed:", err?.message || err);
-    }
   };
 
   // 📹 Upload Video
@@ -401,7 +355,7 @@ export default function HomeScreen() {
     }
   };
 
-  // 🛰 Send updated location every 5 seconds
+  // 🛰 Send updated location every 5 seconds to backend
   const sendLocationUpdate = async () => {
     if (!tracking || !sosId) return;
 
@@ -420,6 +374,28 @@ export default function HomeScreen() {
       console.log("📍 Continuous location update sent:", latitude, longitude);
     } catch (err: any) {
       console.log("❌ Failed to send update location:", err?.message || err);
+    }
+  };
+
+  // 🎙 Stop audio recording
+  const stopRecording = async () => {
+    try {
+      const rec = recordingRef.current; // 🟢 Use Ref
+      if (!rec) return;
+      console.log("🎙 Stopping recording...");
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      console.log("📁 Audio file saved at:", uri);
+      setRecording(null);
+      recordingRef.current = null; // 🟢 Clear Ref
+
+      if (uri) {
+        uploadAudio(uri); // 🟢 Upload immediately
+      }
+
+      Alert.alert("Recording Saved", "Audio evidence stored locally.");
+    } catch (err) {
+      console.log("🎙 Stop recording error:", err);
     }
   };
 
@@ -451,7 +427,23 @@ export default function HomeScreen() {
       requestCameraPermission();
     }
 
-    // Start interval
+    // Auto stop recording after 1 minute
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+    }
+    recordingTimerRef.current = setTimeout(async () => {
+      if (isAutoSendingRef.current) return;   // 🔒 prevent duplicate sends
+      isAutoSendingRef.current = true;
+
+      console.log("⏰ Auto-stopping recording after 30 seconds");
+
+      await stopRecording();   // 🔥 IMPORTANT: now SMS + upload completes
+
+      isAutoSendingRef.current = false;
+    }, 30000);
+
+
+    // Start interval for continuous location updates
     const id = setInterval(() => {
       sendLocationUpdate();
     }, 5000); // 5 seconds
@@ -475,6 +467,12 @@ export default function HomeScreen() {
       setIntervalId(null);
     }
 
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    // Stop recording immediately, upload & send audio link
     await stopRecording();
     stopVideoRecording();
 
@@ -501,7 +499,7 @@ export default function HomeScreen() {
     setCooldown(true);
     setTimeout(() => setCooldown(false), 5000); // 5s cooldown
 
-    console.log("⚙️ Auto SOS started…");
+    console.log("⚙ Auto SOS started…");
 
     let latitude: number | null = null;
     let longitude: number | null = null;
@@ -539,7 +537,7 @@ export default function HomeScreen() {
         console.log("❌ Backend error:", err?.message || err);
       }
 
-      // 3️⃣ SMS to all contacts
+      // 3️⃣ Immediate SMS (location only)
       if (latitude !== null && longitude !== null) {
         smsOk = await sendSMSWithLocation(latitude, longitude);
       }
@@ -551,7 +549,7 @@ export default function HomeScreen() {
         smsOk,
       });
 
-      // 5️⃣ Start continuous tracking + recording only if backend succeeded
+      // 5️⃣ Start continuous tracking + audio recording only if backend succeeded
       if (backendOk && createdSosId !== null) {
         await startTracking(createdSosId);
       }
@@ -568,8 +566,6 @@ export default function HomeScreen() {
       Alert.alert("Error", "Failed to send SOS (unexpected error)");
     }
   };
-
-
 
   const magnitude = Math.sqrt(
     data.x * data.x + data.y * data.y + data.z * data.z
@@ -649,157 +645,226 @@ export default function HomeScreen() {
   const logout = async () => {
     try {
       await AsyncStorage.removeItem("token");
-      router.replace("/login");   // now router exists ✔
+      router.replace("/login");
     } catch (error) {
       console.log("❌ Logout error:", error);
     }
   };
 
   return (
-    <ScrollView style={styles.screen}>
+    <ScrollView style={styles.screen} showsVerticalScrollIndicator={false}>
+      {/* Header Section */}
       <View style={styles.header}>
-        <Text style={styles.appTitle}>Motion-based Auto SOS</Text>
-        <Text style={styles.appSubtitle}>
-          Detects sudden motion, logs SOS & shares live location to multiple
-          contacts.
-        </Text>
-      </View>
-
-      {/* Motion Card */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Live Motion</Text>
-        <Text style={styles.motionValue}>{magnitude} g</Text>
-        <Text style={styles.motionSub}>
-          Threshold: {THRESHOLD.toFixed(1)} g
-        </Text>
-        <Text
-          style={[
-            styles.cooldownText,
-            cooldown ? styles.cooldownActive : styles.cooldownReady,
-          ]}
-        >
-          {cooldown ? "Cooldown active" : "Monitoring…"}
-        </Text>
-        <Text
-          style={{
-            color: tracking ? "#22c55e" : "#9ca3af",
-            marginTop: 4,
-            fontSize: 12,
-          }}
-        >
-          {tracking ? "Tracking + recording active" : "Tracking inactive"}
-        </Text>
-      </View>
-
-      {/* Last SOS Status */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Last SOS Status</Text>
-        <Text style={styles.lastTime}>
-          {lastSOS.time ? `Triggered at ${lastSOS.time}` : "No SOS yet"}
-        </Text>
-
-        {renderStatusBadge("Backend", lastSOS.backendOk)}
-        {renderStatusBadge("SMS", lastSOS.smsOk)}
-      </View>
-
-      {/* Emergency Contacts – View + Add + Delete */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Emergency Contacts</Text>
-        <Text style={styles.contactsInfo}>
-          Total contacts: {contacts.length}
-        </Text>
-
-        {/* List */}
-        {contacts.length === 0 ? (
-          <Text style={styles.noContacts}>
-            No contacts yet. Add at least one emergency contact.
+        <View style={styles.headerContent}>
+          <Text style={styles.appTitle}>Aarambh</Text>
+          <Text style={styles.appSubtitle}>
+            Smart emergency detection with motion, voice, and live location tracking
           </Text>
-        ) : (
-          contacts.map((c) => (
-            <TouchableOpacity
-              key={c.id}
-              style={styles.contactRow}
-              // 🔁 CHANGED: simple tap instead of long-press
-              onPress={() => handleDeleteContact(c.id)}
-            >
-              <View>
-                <Text style={styles.contactName}>{c.name}</Text>
-                <Text style={styles.contactPhone}>{c.phoneNumber}</Text>
-              </View>
-              <Text style={styles.deleteHint}>Tap to delete</Text>
-            </TouchableOpacity>
-          ))
-        )}
-
-        {/* Add Form */}
-        <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Name"
-            placeholderTextColor="#6b7280"
-            value={contactName}
-            onChangeText={setContactName}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Phone number"
-            placeholderTextColor="#6b7280"
-            value={contactPhone}
-            onChangeText={setContactPhone}
-            keyboardType="phone-pad"
-          />
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={handleAddContact}
-          >
-            <Text style={styles.addButtonText}>Add Contact</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
-      {/* SOS Button */}
-      <View style={styles.sosContainer}>
-        <TouchableOpacity
-          style={styles.sosButton}
-          onPress={tracking ? stopTracking : triggerAutoSOS}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.sosText}>
-            {tracking ? "STOP\nSOS" : "SOS"}
-          </Text>
-        </TouchableOpacity>
-        <Text style={styles.sosHint}>
-          {tracking
-            ? "Tap to stop or shake to auto-detect."
-            : "Tap to SOS or shake to auto-detect."}
-        </Text>
+      {/* Main Content */}
+      <View style={styles.content}>
+        {/* Motion Detection Card */}
+        <View style={[styles.card, styles.motionCard]}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardIcon}>
+              <Text style={styles.cardIconText}>📡</Text>
+            </View>
+            <View>
+              <Text style={styles.cardTitle}>Motion Detection</Text>
+              <Text style={styles.cardSubtitle}>Live accelerometer monitoring</Text>
+            </View>
+          </View>
 
-        {/* Temporary Test Link */}
-        <TouchableOpacity
-          style={{ marginTop: 20, padding: 10, backgroundColor: '#333', borderRadius: 8 }}
-          onPress={() => router.push('/voice-test')}
-        >
-          <Text style={{ color: 'white', textAlign: 'center' }}>Test Voice SOS Module</Text>
-        </TouchableOpacity>
-      </View>
+          <View style={styles.motionContent}>
+            <View style={styles.magnitudeContainer}>
+              <Text style={styles.motionValue}>{magnitude}</Text>
+              <Text style={styles.motionUnit}>g-force</Text>
+            </View>
 
-      {/* Logout Button */}
-      <View style={{ alignItems: "center", marginBottom: 40 }}>
-        <TouchableOpacity
-          style={{
-            backgroundColor: "#1f2937",
-            paddingVertical: 10,
-            paddingHorizontal: 25,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: "#374151",
-          }}
-          onPress={logout}
-        >
-          <Text style={{ color: "#f87171", fontSize: 16, fontWeight: "700" }}>
-            Logout
-          </Text>
-        </TouchableOpacity>
+            <View style={styles.thresholdContainer}>
+              <Text style={styles.thresholdLabel}>Threshold: {THRESHOLD.toFixed(1)} g</Text>
+              <View style={styles.thresholdBar}>
+                <View
+                  style={[
+                    styles.thresholdFill,
+                    {
+                      width: `${(Math.min(parseFloat(magnitude), THRESHOLD * 1.5) / (THRESHOLD * 1.5)) * 100}%`,
+                      backgroundColor: parseFloat(magnitude) > THRESHOLD ? '#ef4444' : '#22c55e'
+                    }
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.statusContainer}>
+            <View style={styles.statusItem}>
+              <View style={[styles.statusDot, cooldown ? styles.statusDotWarning : styles.statusDotSuccess]} />
+              <Text style={styles.statusText}>
+                {cooldown ? "Cooldown Active" : "Monitoring"}
+              </Text>
+            </View>
+            <View style={styles.statusItem}>
+              <View style={[styles.statusDot, tracking ? styles.statusDotActive : styles.statusDotInactive]} />
+              <Text style={styles.statusText}>
+                {tracking ? "Tracking Active" : "Tracking Ready"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Last SOS Status */}
+        <View style={[styles.card, styles.statusCard]}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardIcon}>
+              <Text style={styles.cardIconText}>🚨</Text>
+            </View>
+            <View>
+              <Text style={styles.cardTitle}>Last SOS Status</Text>
+              <Text style={styles.cardSubtitle}>
+                {lastSOS.time ? `Triggered at ${lastSOS.time}` : "No SOS events yet"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.statusBadges}>
+            {renderStatusBadge("Backend Service", lastSOS.backendOk)}
+            {renderStatusBadge("SMS Notifications", lastSOS.smsOk)}
+          </View>
+        </View>
+
+        {/* Emergency Contacts */}
+        <View style={[styles.card, styles.contactsCard]}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardIcon}>
+              <Text style={styles.cardIconText}>📞</Text>
+            </View>
+            <View>
+              <Text style={styles.cardTitle}>Emergency Contacts</Text>
+              <Text style={styles.cardSubtitle}>
+                {contacts.length} contact{contacts.length !== 1 ? 's' : ''} configured
+              </Text>
+            </View>
+          </View>
+
+          {/* Contacts List */}
+          {contacts.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateIcon}>👥</Text>
+              <Text style={styles.emptyStateTitle}>No Contacts</Text>
+              <Text style={styles.emptyStateText}>
+                Add emergency contacts to receive SOS alerts
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.contactsList}>
+              {contacts.map((c) => (
+                <TouchableOpacity
+                  key={c.id}
+                  style={styles.contactItem}
+                  onPress={() => handleDeleteContact(c.id)}
+                >
+                  <View style={styles.contactAvatar}>
+                    <Text style={styles.contactAvatarText}>
+                      {c.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.contactInfo}>
+                    <Text style={styles.contactName}>{c.name}</Text>
+                    <Text style={styles.contactPhone}>{c.phoneNumber}</Text>
+                  </View>
+                  <View style={styles.contactAction}>
+                    <Text style={styles.deleteText}>Remove</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Add Contact Form */}
+          <View style={styles.addContactForm}>
+            <Text style={styles.formTitle}>Add New Contact</Text>
+            <View style={styles.formRow}>
+              <TextInput
+                style={[styles.input, styles.flex1]}
+                placeholder="Full Name"
+                placeholderTextColor="#94a3b8"
+                value={contactName}
+                onChangeText={setContactName}
+              />
+              <TextInput
+                style={[styles.input, styles.flex1]}
+                placeholder="Phone Number"
+                placeholderTextColor="#94a3b8"
+                value={contactPhone}
+                onChangeText={setContactPhone}
+                keyboardType="phone-pad"
+              />
+            </View>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={handleAddContact}
+            >
+              <Text style={styles.addButtonText}>Add Contact</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* SOS Button Section */}
+        <View style={styles.sosSection}>
+          <View style={styles.sosContainer}>
+            <TouchableOpacity
+              style={[
+                styles.sosButton,
+                tracking && styles.sosButtonActive
+              ]}
+              onPress={tracking ? stopTracking : triggerAutoSOS}
+              activeOpacity={0.8}
+            >
+              <View style={styles.sosButtonInner}>
+                <Text style={styles.sosIcon}>
+                  {tracking ? "🛑" : "🚨"}
+                </Text>
+                <Text style={styles.sosText}>
+                  {tracking ? "STOP SOS" : "EMERGENCY SOS"}
+                </Text>
+                <Text style={styles.sosSubtext}>
+                  {tracking ? "Tap to stop emergency" : "Tap or shake to trigger"}
+                </Text>
+              </View>
+
+              {/* Pulsing animation when tracking */}
+              {tracking && <View style={styles.pulseRing} />}
+              {tracking && <View style={[styles.pulseRing, styles.pulseRing2]} />}
+            </TouchableOpacity>
+
+            <Text style={styles.sosHint}>
+              {tracking
+                ? "Emergency active - Location tracking and audio recording enabled"
+                : "System ready - Motion and voice detection active"}
+            </Text>
+          </View>
+
+          {/* Voice Test Link */}
+          <TouchableOpacity
+            style={styles.testButton}
+            onPress={() => router.push("/voice-test")}
+          >
+            <Text style={styles.testButtonText}>Test Voice SOS Module</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Logout Section */}
+        <View style={styles.logoutSection}>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={logout}
+          >
+            <Text style={styles.logoutButtonText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
 
@@ -815,79 +880,188 @@ export default function HomeScreen() {
       </View>
     </ScrollView >
   );
+
 }
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#020617",
-    paddingHorizontal: 20,
-    paddingTop: 40,
+    backgroundColor: "#0f172a",
   },
   header: {
-    marginBottom: 16,
+    backgroundColor: "#1e293b",
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 24,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  headerContent: {
+    alignItems: 'center',
   },
   appTitle: {
     color: "white",
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 28,
+    fontWeight: "800",
+    textAlign: 'center',
+    marginBottom: 8,
   },
   appSubtitle: {
-    color: "#9ca3af",
-    marginTop: 6,
-    fontSize: 13,
+    color: "#cbd5e1",
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  content: {
+    padding: 20,
   },
   card: {
-    backgroundColor: "#0b1120",
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: "#1e293b",
+    borderRadius: 20,
+    padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#1f2937",
+    borderColor: "#334155",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  motionCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#3b82f6",
+  },
+  statusCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#f59e0b",
+  },
+  contactsCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#10b981",
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  cardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "rgba(59, 130, 246, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  cardIconText: {
+    fontSize: 18,
   },
   cardTitle: {
-    color: "#e5e7eb",
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 8,
+    color: "#f8fafc",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  cardSubtitle: {
+    color: "#94a3b8",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  motionContent: {
+    alignItems: 'center',
+    marginVertical: 16,
+  },
+  magnitudeContainer: {
+    alignItems: 'center',
+    marginBottom: 16,
   },
   motionValue: {
     color: "#f97316",
-    fontSize: 32,
+    fontSize: 42,
     fontWeight: "800",
+    textShadowColor: 'rgba(249, 115, 22, 0.3)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
   },
-  motionSub: {
-    color: "#9ca3af",
-    marginTop: 4,
-  },
-  cooldownText: {
-    marginTop: 10,
-    fontSize: 13,
+  motionUnit: {
+    color: "#94a3b8",
+    fontSize: 14,
     fontWeight: "600",
+    marginTop: -4,
   },
-  cooldownActive: {
-    color: "#f97316",
+  thresholdContainer: {
+    width: '100%',
   },
-  cooldownReady: {
-    color: "#22c55e",
+  thresholdLabel: {
+    color: "#cbd5e1",
+    fontSize: 12,
+    marginBottom: 8,
+    textAlign: 'center',
   },
-  lastTime: {
-    color: "#9ca3af",
-    marginBottom: 10,
+  thresholdBar: {
+    height: 6,
+    backgroundColor: "#334155",
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  thresholdFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 8,
+  },
+  statusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusDotSuccess: {
+    backgroundColor: '#22c55e',
+  },
+  statusDotWarning: {
+    backgroundColor: '#f59e0b',
+  },
+  statusDotActive: {
+    backgroundColor: '#ef4444',
+  },
+  statusDotInactive: {
+    backgroundColor: '#6b7280',
+  },
+  statusText: {
+    color: "#cbd5e1",
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  statusBadges: {
+    marginTop: 8,
   },
   badgeRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 6,
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
   },
   badgeLabel: {
-    color: "#e5e7eb",
-    flex: 1,
+    color: "#e2e8f0",
+    fontSize: 14,
+    fontWeight: "500",
   },
   badge: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 6,
+    minWidth: 80,
+    alignItems: 'center',
   },
   badgeText: {
     color: "white",
@@ -903,72 +1077,128 @@ const styles = StyleSheet.create({
   badgePending: {
     backgroundColor: "#6b7280",
   },
-  contactsInfo: {
-    color: "#9ca3af",
-    fontSize: 13,
-    marginBottom: 6,
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
   },
-  noContacts: {
-    color: "#6b7280",
-    fontSize: 13,
-    marginBottom: 10,
+  emptyStateIcon: {
+    fontSize: 48,
+    marginBottom: 12,
   },
-  contactRow: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1f2937",
+  emptyStateTitle: {
+    color: "#e2e8f0",
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  emptyStateText: {
+    color: "#94a3b8",
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  contactsList: {
+    marginBottom: 20,
+  },
+  contactItem: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+  },
+  contactAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#3b82f6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  contactAvatarText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  contactInfo: {
+    flex: 1,
   },
   contactName: {
-    color: "#e5e7eb",
-    fontSize: 14,
+    color: "#f8fafc",
+    fontSize: 15,
     fontWeight: "600",
   },
   contactPhone: {
-    color: "#9ca3af",
+    color: "#94a3b8",
     fontSize: 13,
+    marginTop: 2,
   },
-  deleteHint: {
-    color: "#f97316",
-    fontSize: 10,
+  contactAction: {},
+  deleteText: {
+    color: "#ef4444",
+    fontSize: 12,
+    fontWeight: '600',
   },
-  form: {
-    marginTop: 12,
+  addContactForm: {
+    backgroundColor: "#0f172a",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  formTitle: {
+    color: "#e2e8f0",
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  formRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
   },
   input: {
-    backgroundColor: "#020617",
-    borderRadius: 10,
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#1f2937",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderColor: "#334155",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     color: "white",
-    marginBottom: 8,
-    fontSize: 13,
+    fontSize: 14,
+  },
+  flex1: {
+    flex: 1,
   },
   addButton: {
-    backgroundColor: "#22c55e",
-    borderRadius: 999,
-    paddingVertical: 10,
+    backgroundColor: "#10b981",
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: "center",
-    marginTop: 4,
+    shadowColor: "#10b981",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   addButtonText: {
     color: "white",
     fontWeight: "700",
     fontSize: 14,
   },
-  sosContainer: {
-    alignItems: "center",
+  sosSection: {
+    alignItems: 'center',
     marginTop: 8,
-    marginBottom: 32,
+    marginBottom: 24,
+  },
+  sosContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
   },
   sosButton: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
     backgroundColor: "#ef4444",
     alignItems: "center",
     justifyContent: "center",
@@ -977,18 +1207,83 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 16,
     elevation: 10,
+    marginBottom: 16,
+  },
+  sosButtonActive: {
+    backgroundColor: "#dc2626",
+  },
+  sosButtonInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  sosIcon: {
+    fontSize: 32,
+    marginBottom: 8,
   },
   sosText: {
     color: "white",
-    fontSize: 24, // Reduced size to fit
+    fontSize: 18,
     fontWeight: "900",
     letterSpacing: 1,
-    textAlign: "center", // Center align for multi-line
+    textAlign: "center",
+  },
+  sosSubtext: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    borderWidth: 2,
+    borderColor: '#ef4444',
+    opacity: 0.6,
+  },
+  pulseRing2: {
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    opacity: 0.3,
   },
   sosHint: {
-    color: "#9ca3af",
+    color: "#94a3b8",
     fontSize: 12,
-    marginTop: 12,
     textAlign: "center",
+    lineHeight: 16,
+    maxWidth: 280,
+  },
+  testButton: {
+    backgroundColor: "#334155",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#475569",
+  },
+  testButtonText: {
+    color: "#e2e8f0",
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  logoutSection: {
+    alignItems: "center",
+    marginBottom: 40,
+  },
+  logoutButton: {
+    backgroundColor: "#1e293b",
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  logoutButtonText: {
+    color: "#ef4444",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });
