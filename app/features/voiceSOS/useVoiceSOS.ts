@@ -33,6 +33,7 @@ interface VoiceSOSOptions {
     }) => void;
     onAudioRecorded?: (uri: string) => void;
     onError?: (error: any) => void;
+    customSafeWords?: string[];
 }
 
 export default function useVoiceSOS(options: VoiceSOSOptions) {
@@ -48,6 +49,10 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
     // 🔄 Keep track of latest callback to avoid stale closures
     const onKeywordDetectedRef = useRef(onKeywordDetected);
     onKeywordDetectedRef.current = onKeywordDetected;
+
+    // 🔄 Keep track of latest custom words
+    const customSafeWordsRef = useRef(options.customSafeWords || []);
+    customSafeWordsRef.current = options.customSafeWords || [];
 
     // 1. Send to Cloud (Groq Whisper)
     const sendAudioToCloud = async (uri: string) => {
@@ -69,9 +74,11 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
             // 🎯 OPTIMIZATION: Force English (Latin script) & Provide Context
             // This helps with Hinglish (e.g. "Bachao") and reduces hallucinations.
             formData.append('language', 'en');
-            formData.append('prompt', 'Emergency phrases: Help, Bachao, Madad, Save me. Transcribe in English or Hinglish.');
+            const customWordsStr = customSafeWordsRef.current.join(", ");
+            const prompt = `Emergency phrases: Help, Bachao, Madad, Save me. Safe phrases: I am safe, Cancel, ${customWordsStr}. Transcribe in English or Hinglish.`;
+            formData.append('prompt', prompt);
 
-            console.log('[VoiceSOS] Sending audio to Groq...');
+            console.log('[VoiceSOS] Sending audio...');
             const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
                 method: 'POST',
                 headers: {
@@ -103,7 +110,13 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
         const lowerText = text.toLowerCase();
 
         // 1. Check for Safe Phrases FIRST
-        const safeDetected = SAFE_PHRASES.find(phrase => lowerText.includes(phrase));
+        // 1. Check for Safe Phrases FIRST
+        const allSafePhrases = [...SAFE_PHRASES, ...customSafeWordsRef.current];
+
+        console.log(`[VoiceSOS] Checking text: "${lowerText}" against safe words:`, allSafePhrases);
+
+        // Use logic that checks if the lowerText INCLUDES any phrase
+        const safeDetected = allSafePhrases.find(phrase => lowerText.includes(phrase.toLowerCase()));
         if (safeDetected) {
             console.log(`[VoiceSOS] 🛡 SAFE WORD DETECTED: "${safeDetected}"`);
             onKeywordDetectedRef.current({

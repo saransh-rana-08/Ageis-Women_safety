@@ -11,12 +11,14 @@ import * as SMS from "expo-sms";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  FlatList,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import { useVideoSOS } from "../features/videoSOS/useVideoSOS";
 import useVoiceSOS from "../features/voiceSOS/useVoiceSOS";
@@ -68,6 +70,12 @@ export default function HomeScreen() {
   const countdownTimerRef = useRef<any>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
 
+  // 🛡 Custom Safe Words State
+  const [customSafeWords, setCustomSafeWords] = useState<string[]>([]);
+  const [isSafeWordModalVisible, setIsSafeWordModalVisible] = useState(false);
+  const [newSafeWord, setNewSafeWord] = useState("");
+
+
   // 🟢 Ref for Pre-SOS state to use inside callbacks
   const preSosActiveRef = useRef(false);
 
@@ -87,6 +95,7 @@ export default function HomeScreen() {
 
   // 🗣 Voice SOS Hook
   const { startListening, stopListening, isListening, isModelReady } = useVoiceSOS({
+    customSafeWords: customSafeWords, // 🟢 PASS CUSTOM WORDS
     onKeywordDetected: async (info: any) => {
       console.log("🗣 Voice SOS triggered:", info.keyword, "Type:", info.type);
 
@@ -226,6 +235,46 @@ export default function HomeScreen() {
       }
     };
   }, [intervalId]);
+
+  // 🛡 Load Safe Words on Mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const storedWords = await AsyncStorage.getItem("custom_safe_words");
+        if (storedWords) {
+          setCustomSafeWords(JSON.parse(storedWords));
+        }
+      } catch (e) {
+        console.log("❌ Failed to load safe words:", e);
+      }
+    })();
+  }, []);
+
+  // 🛡 Save Safe Words Helper
+  const saveSafeWords = async (updatedWords: string[]) => {
+    try {
+      await AsyncStorage.setItem("custom_safe_words", JSON.stringify(updatedWords));
+      setCustomSafeWords(updatedWords);
+    } catch (e) {
+      console.log("❌ Failed to save safe words:", e);
+    }
+  };
+
+  const addSafeWord = () => {
+    if (!newSafeWord.trim()) return;
+    if (customSafeWords.includes(newSafeWord.trim())) {
+      Alert.alert("Duplicate", "This word is already added.");
+      return;
+    }
+    const updated = [...customSafeWords, newSafeWord.trim()];
+    saveSafeWords(updated);
+    setNewSafeWord("");
+  };
+
+  const deleteSafeWord = (word: string) => {
+    const updated = customSafeWords.filter(w => w !== word);
+    saveSafeWords(updated);
+  };
 
   // 📩 SMS (now can include optional audio URL)
   const sendSMSWithLocation = async (
@@ -1129,6 +1178,15 @@ export default function HomeScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* 🛡 Safe Words Button */}
+          <TouchableOpacity
+            style={styles.safeWordsButton}
+            onPress={() => setIsSafeWordModalVisible(true)}
+          >
+            <Text style={styles.safeWordsIcon}>🛡</Text>
+            <Text style={styles.safeWordsText}>Manage Safe Words</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Logout Section */}
@@ -1162,6 +1220,56 @@ export default function HomeScreen() {
           </View>
         </View>
       )}
+
+      {/* 🛡 Safe Words Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={isSafeWordModalVisible}
+        onRequestClose={() => setIsSafeWordModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Manage Safe Words</Text>
+            <Text style={styles.modalSubtitle}>Say these words to cancel an SOS.</Text>
+
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Enter word (e.g. 'False Alarm')"
+                placeholderTextColor="#64748b"
+                value={newSafeWord}
+                onChangeText={setNewSafeWord}
+              />
+              <TouchableOpacity style={styles.modalAddButton} onPress={addSafeWord}>
+                <Text style={styles.modalAddButtonText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={customSafeWords}
+              keyExtractor={(item) => item}
+              style={styles.modalList}
+              renderItem={({ item }) => (
+                <View style={styles.modalListItem}>
+                  <Text style={styles.modalListItemText}>{item}</Text>
+                  <TouchableOpacity onPress={() => deleteSafeWord(item)}>
+                    <Text style={styles.modalDeleteIcon}>🗑</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              ListEmptyComponent={<Text style={styles.modalEmptyText}>No custom words added yet.</Text>}
+            />
+
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setIsSafeWordModalVisible(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
 
       {/* Hidden Camera View for Background Recording */}
@@ -1589,6 +1697,112 @@ const styles = StyleSheet.create({
     color: "#ef4444",
     fontSize: 16,
     fontWeight: "700",
+  },
+  safeWordsButton: {
+    backgroundColor: "#1e293b",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  safeWordsIcon: {
+    fontSize: 18,
+    marginRight: 8,
+  },
+  safeWordsText: {
+    color: "#cbd5e1",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: "#1e293b",
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: "80%",
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "white",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#94a3b8",
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  inputRow: {
+    flexDirection: "row",
+    marginBottom: 16,
+  },
+  modalInput: {
+    flex: 1,
+    backgroundColor: "#0f172a",
+    borderRadius: 8,
+    padding: 12,
+    color: "white",
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginRight: 10,
+  },
+  modalAddButton: {
+    backgroundColor: "#f97316",
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+  },
+  modalAddButtonText: {
+    color: "white",
+    fontWeight: "bold",
+  },
+  modalList: {
+    marginBottom: 20,
+  },
+  modalListItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  modalListItemText: {
+    color: "white",
+    fontSize: 16,
+  },
+  modalDeleteIcon: {
+    color: "#ef4444",
+    fontSize: 18,
+  },
+  modalEmptyText: {
+    color: "#64748b",
+    textAlign: "center",
+    fontStyle: "italic",
+    marginTop: 20,
+  },
+  modalCloseButton: {
+    backgroundColor: "#334155",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  modalCloseButtonText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 16,
   },
   preSosOverlay: {
     ...StyleSheet.absoluteFillObject,
