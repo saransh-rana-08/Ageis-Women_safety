@@ -58,6 +58,14 @@
           "saveToGalleryPermission": "Allow $(PRODUCT_NAME) to save photos to your gallery.",
           "isAccessMediaLocationEnabled": true
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "experiments": {

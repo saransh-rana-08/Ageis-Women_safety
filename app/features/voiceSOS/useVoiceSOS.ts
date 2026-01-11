@@ -18,9 +18,16 @@ const TRIGGER_PHRASES = [
     "nahi nahi", "mere paas mat aao"
 ];
 
+const SAFE_PHRASES = [
+    "i am safe", "im safe", "safe",
+    "false alarm", "cancel", "stop sos", "don't send", "dont send",
+    "main theek hoon", "galti se hua", "ruk jao", "sab theek hai"
+];
+
 interface VoiceSOSOptions {
     onKeywordDetected: (info: {
         keyword: string;
+        type: 'trigger' | 'safe';
         confidence: number;
         timestamp: number;
     }) => void;
@@ -95,7 +102,20 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
         if (!text) return;
         const lowerText = text.toLowerCase();
 
-        // Check if any phrase is in the text
+        // 1. Check for Safe Phrases FIRST
+        const safeDetected = SAFE_PHRASES.find(phrase => lowerText.includes(phrase));
+        if (safeDetected) {
+            console.log(`[VoiceSOS] 🛡 SAFE WORD DETECTED: "${safeDetected}"`);
+            onKeywordDetectedRef.current({
+                keyword: safeDetected,
+                type: 'safe',
+                confidence: 1.0,
+                timestamp: Date.now(),
+            });
+            return; // Exit if safe word found
+        }
+
+        // 2. Check for Trigger Phrases
         const detected = TRIGGER_PHRASES.find(phrase => lowerText.includes(phrase));
 
         if (detected) {
@@ -103,6 +123,7 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
             // Call the REF instead of the prop directly
             onKeywordDetectedRef.current({
                 keyword: detected,
+                type: 'trigger',
                 confidence: 1.0,
                 timestamp: Date.now(),
             });
