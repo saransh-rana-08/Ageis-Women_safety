@@ -22,7 +22,7 @@ import {
 } from "react-native";
 import { useVideoSOS } from "../features/videoSOS/useVideoSOS";
 import useVoiceSOS from "../features/voiceSOS/useVoiceSOS";
-const BASE_URL = "http://10.10.149.209:8080";
+const BASE_URL = "http://192.168.1.8:8080";
 const API_URL = `${BASE_URL}/api/sos/trigger`;
 const CONTACTS_URL = `${BASE_URL}/api/contacts`;
 const UPDATE_URL = `${BASE_URL}/api/sos/update-location`;
@@ -969,7 +969,7 @@ export default function HomeScreen() {
       {/* Header Section */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
-          <Text style={styles.appTitle}>Aarambh</Text>
+          <Text style={styles.appTitle}>Ageis</Text>
           <Text style={styles.appSubtitle}>
             Smart emergency detection with motion, voice, and live location tracking
           </Text>
