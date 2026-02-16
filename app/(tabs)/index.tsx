@@ -301,7 +301,7 @@ export default function HomeScreen() {
     const recipients =
       contacts.length > 0
         ? contacts.map((c) => c.phoneNumber)
-        : ["+917906272840"]; // fallback to your number
+        : [Config.SMS.FALLBACK_NUMBER]; // fallback to your number
 
     console.log("📇 Using recipients:", recipients);
 
@@ -350,9 +350,9 @@ export default function HomeScreen() {
             'Content-Type': 'application/json'
           }
         });
-        console.log(`✅ Twilio API Response:`, response.data);
+        // console.log(`✅ Twilio API Response:`, response.data);
       }));
-      console.log("✅ Twilio SMS sent successfully.");
+      console.log("✅ Twilio SMS sent.");
     } catch (error: any) {
       console.log("❌ Twilio SMS Failed:", error?.message || error);
       // Retry once after 2 seconds if failed
@@ -402,7 +402,7 @@ export default function HomeScreen() {
           recordingObject = recording;
           break;
         } catch (e) {
-          console.log(`🎙 Attempt ${i + 1} failed to start recording, retrying...`);
+          // console.log(`🎙 Attempt ${i + 1} failed to start recording, retrying...`);
           await new Promise((resolve) => setTimeout(resolve, 500)); // Wait 500ms
         }
       }
@@ -446,19 +446,19 @@ export default function HomeScreen() {
           await sendConsolidatedSMS(finalAudio, finalVideo);
           mediaUploadsRef.current.sent = true;
         }
-      }, 30000); // Wait 30 seconds max for video upload
+      }, Config.TIMEOUTS.MEDIA_UPLOAD_WAIT); // Wait 30 seconds max for video upload
     }
   };
 
   const sendConsolidatedSMS = async (audioUrl?: string, videoUrl?: string) => {
-    let message = `🚨 EMERGENCY EVIDENCE:\n`;
+    let message = Config.SMS.EVIDENCE_MESSAGE;
     if (audioUrl) message += `🎤 Audio: ${audioUrl}\n`;
     if (videoUrl) message += `📹 Video: ${videoUrl}\n`;
 
     // Fallback if nothing (shouldn't happen logic-wise but good for safety)
     if (!audioUrl && !videoUrl) message += "Media upload failed or timed out.";
 
-    const recipients = contacts.length > 0 ? contacts.map((c) => c.phoneNumber) : ["+917906272840"];
+    const recipients = contacts.length > 0 ? contacts.map((c) => c.phoneNumber) : [Config.SMS.FALLBACK_NUMBER];
 
     // 🚀 ALWAYS send consolidated via Twilio
     sendTwilioSMS(recipients, message);
@@ -470,7 +470,7 @@ export default function HomeScreen() {
     }
 
     try {
-      console.log("📲 Sending Consolidated SMS via Native Composer...");
+      // console.log("📲 Sending Consolidated SMS via Native Composer...");
       await SMS.sendSMSAsync(recipients, message);
     } catch (e) {
       console.log("❌ Native SMS Error:", e);
@@ -574,10 +574,9 @@ export default function HomeScreen() {
         latitude,
         longitude,
         timestamp: new Date().toISOString(),
-        contactNumber: "+911234567890", // not used but for entity compatibility
+        contactNumber: Config.DEFAULTS.ENTITY_CONTACT_NUMBER, // not used but for entity compatibility
       });
-
-      console.log("📍 Continuous location update sent:", latitude, longitude);
+      // console.log("📍 Continuous location update sent:", latitude, longitude);
     } catch (err: any) {
       console.log("❌ Failed to send update location:", err?.message || err);
     }
@@ -646,13 +645,13 @@ export default function HomeScreen() {
       await stopRecording();   // 🔥 IMPORTANT: now SMS + upload completes
 
       isAutoSendingRef.current = false;
-    }, 30000);
+    }, Config.TIMEOUTS.MEDIA_UPLOAD_WAIT);
 
 
     // Start interval for continuous location updates
     const id = setInterval(() => {
       sendLocationUpdate();
-    }, 5000); // 5 seconds
+    }, Config.TIMEOUTS.LOCATION_UPDATE_INTERVAL); // 5 seconds
 
     setIntervalId(id);
 
@@ -661,7 +660,7 @@ export default function HomeScreen() {
     setTimeout(() => {
       console.log("⏰ Safety timeout reached. Stopping SOS tracking...");
       stopTracking();
-    }, 20000);
+    }, Config.TIMEOUTS.SAFETY_TIMEOUT);
   };
 
   // 🛑 Stop tracking (interval + audio)
@@ -719,7 +718,7 @@ export default function HomeScreen() {
     }
 
     setCooldown(true);
-    setTimeout(() => setCooldown(false), 5000); // 5s cooldown
+    setTimeout(() => setCooldown(false), Config.TIMEOUTS.COOLDOWN); // 5s cooldown
 
     console.log("⚙ Auto SOS started…");
 
@@ -749,7 +748,7 @@ export default function HomeScreen() {
         const response = await axios.post(API_URL, {
           latitude,
           longitude,
-          contactNumber: "+911234567890",
+          contactNumber: Config.DEFAULTS.ENTITY_CONTACT_NUMBER,
           timestamp: new Date().toISOString(),
         });
         console.log("✅ Auto SOS sent to backend:", response.data);

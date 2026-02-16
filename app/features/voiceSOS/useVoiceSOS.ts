@@ -113,7 +113,7 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
         // 1. Check for Safe Phrases FIRST
         const allSafePhrases = [...SAFE_PHRASES, ...customSafeWordsRef.current];
 
-        console.log(`[VoiceSOS] Checking text: "${lowerText}" against safe words:`, allSafePhrases);
+        // console.log(`[VoiceSOS] Checking text: "${lowerText}" against safe words:`, allSafePhrases);
 
         // Use logic that checks if the lowerText INCLUDES any phrase
         const safeDetected = allSafePhrases.find(phrase => lowerText.includes(phrase.toLowerCase()));
@@ -152,15 +152,15 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
 
             // 🛑 VAD CHECK: Log but DO NOT BLOCK
             if (!hasSpeechRef.current) {
-                console.log('[VoiceSOS] ⚠️ Low volume detected, but sending anyway (Robust Mode).');
+                // console.log('[VoiceSOS] ⚠️ Low volume detected, but sending anyway (Robust Mode).');
             }
 
-            console.log('[VoiceSOS] Stopping recording...');
+            // console.log('[VoiceSOS] Stopping recording...');
             await recording.stopAndUnloadAsync();
             const uri = recording.getURI();
 
             if (uri) {
-                console.log('[VoiceSOS] Processing audio:', uri);
+                // console.log('[VoiceSOS] Processing audio:', uri);
                 await sendAudioToCloud(uri);
                 // 🟢 Callback to parent for upload
                 if (options.onAudioRecorded) {
@@ -191,7 +191,7 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
         if (shouldStopRef.current) return;
 
         try {
-            console.log('[VoiceSOS] Starting recording...');
+            // console.log('[VoiceSOS] Starting recording...');
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
                 playsInSilentModeIOS: true,
@@ -254,7 +254,7 @@ export default function useVoiceSOS(options: VoiceSOSOptions) {
 
             // Record for CHUNK_DURATION_MS then process
             setTimeout(async () => {
-                console.log(`[VoiceSOS] Max Volume: ${maxVol.toFixed(1)} dB`); // Debug log
+                // console.log(`[VoiceSOS] Max Volume: ${maxVol.toFixed(1)} dB`); // Debug log
                 if (shouldStopRef.current) {
                     // Just stop if we should stop
                     try {
