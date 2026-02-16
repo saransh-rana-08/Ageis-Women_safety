@@ -1,3 +1,4 @@
+import { Config } from "@/constants/Config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { Audio } from "expo-av";
@@ -22,12 +23,13 @@ import {
 } from "react-native";
 import { useVideoSOS } from "../features/videoSOS/useVideoSOS";
 import useVoiceSOS from "../features/voiceSOS/useVoiceSOS";
-const BASE_URL = "http://192.168.1.8:8080";
-const API_URL = `${BASE_URL}/api/sos/trigger`;
-const CONTACTS_URL = `${BASE_URL}/api/contacts`;
-const UPDATE_URL = `${BASE_URL}/api/sos/update-location`;
+const BASE_URL = Config.API_BASE_URL;
+const API_URL = Config.endpoints.SOS_TRIGGER;
+const CONTACTS_URL = Config.endpoints.CONTACTS;
+const UPDATE_URL = Config.endpoints.UPDATE_LOCATION;
 // 🔊 Media upload backend
-const MEDIA_UPLOAD_URL = `${BASE_URL}/api/media/upload`;
+const MEDIA_UPLOAD_URL = Config.endpoints.MEDIA_UPLOAD;
+const TWILIO_SMS_URL = Config.endpoints.TWILIO_SMS;
 
 interface Contact {
   id: number;
@@ -303,9 +305,12 @@ export default function HomeScreen() {
 
     console.log("📇 Using recipients:", recipients);
 
+    // 🚀 Also trigger automated Twilio SMS (Background)
+    sendTwilioSMS(recipients, message);
+
     if (!isAvailable) {
-      Alert.alert("SMS unavailable", "Cannot open SMS app on this device.");
-      return false;
+      console.log("⚠️ SMS composer unavailable, relying on Twilio API.");
+      return true; // Return true because we sent via API
     }
 
     try {
@@ -316,6 +321,60 @@ export default function HomeScreen() {
       console.log("📩 SMS error:", e?.message || e);
       Alert.alert("SMS Error", "Could not open SMS app.");
       return false;
+    }
+  };
+
+  // 🌐 Send Automated SMS via Twilio API
+  const sendTwilioSMS = async (recipients: string[], message: string) => {
+    try {
+      console.log("🌐 Sending Twilio SMS to:", recipients);
+      // Send to each recipient
+      await Promise.all(recipients.map(async (phone) => {
+        // Ensure E.164 format (default to +91 if missing)
+        let formattedPhone = phone.trim();
+        if (!formattedPhone.startsWith("+")) {
+          if (formattedPhone.startsWith("91") && formattedPhone.length === 12) {
+            formattedPhone = "+" + formattedPhone;
+          } else {
+            formattedPhone = "+91" + formattedPhone;
+          }
+        }
+
+        console.log(`🌐 sending to ${formattedPhone}...`);
+
+        const response = await axios.post(TWILIO_SMS_URL, {
+          to: formattedPhone,
+          message: message
+        }, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log(`✅ Twilio API Response:`, response.data);
+      }));
+      console.log("✅ Twilio SMS sent successfully.");
+    } catch (error: any) {
+      console.log("❌ Twilio SMS Failed:", error?.message || error);
+      // Retry once after 2 seconds if failed
+      setTimeout(async () => {
+        console.log("🔄 Retrying Twilio SMS...");
+        try {
+          await Promise.all(recipients.map(async (phone) => {
+            let formattedPhone = phone.trim();
+            if (!formattedPhone.startsWith("+")) {
+              if (formattedPhone.startsWith("91") && formattedPhone.length === 12) {
+                formattedPhone = "+" + formattedPhone;
+              } else {
+                formattedPhone = "+91" + formattedPhone;
+              }
+            }
+            await axios.post(TWILIO_SMS_URL, { to: formattedPhone, message: message });
+          }));
+          console.log("✅ Twilio SMS Retry Success.");
+        } catch (retryError) {
+          console.log("❌ Twilio SMS Retry Failed.");
+        }
+      }, 2000);
     }
   };
 
@@ -387,14 +446,11 @@ export default function HomeScreen() {
           await sendConsolidatedSMS(finalAudio, finalVideo);
           mediaUploadsRef.current.sent = true;
         }
-      }, 5000); // Wait 5 seconds max
+      }, 30000); // Wait 30 seconds max for video upload
     }
   };
 
   const sendConsolidatedSMS = async (audioUrl?: string, videoUrl?: string) => {
-    const isAvailable = await SMS.isAvailableAsync();
-    if (!isAvailable) return;
-
     let message = `🚨 EMERGENCY EVIDENCE:\n`;
     if (audioUrl) message += `🎤 Audio: ${audioUrl}\n`;
     if (videoUrl) message += `📹 Video: ${videoUrl}\n`;
@@ -404,11 +460,20 @@ export default function HomeScreen() {
 
     const recipients = contacts.length > 0 ? contacts.map((c) => c.phoneNumber) : ["+917906272840"];
 
+    // 🚀 ALWAYS send consolidated via Twilio
+    sendTwilioSMS(recipients, message);
+
+    const isAvailable = await SMS.isAvailableAsync();
+    if (!isAvailable) {
+      console.log("⚠️ SMS composer unavailable, relying on Twilio API (media/evidence).");
+      return;
+    }
+
     try {
-      console.log("📲 Sending Consolidated SMS...");
+      console.log("📲 Sending Consolidated SMS via Native Composer...");
       await SMS.sendSMSAsync(recipients, message);
     } catch (e) {
-      console.log("❌ SMS Error:", e);
+      console.log("❌ Native SMS Error:", e);
     }
   };
 
