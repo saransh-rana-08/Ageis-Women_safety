@@ -1,5 +1,5 @@
-const FALLBACK_URL = "http://192.168.0.110:8080";
-const TWILIO_SERVICE_URL = "http://192.168.0.110:8082";
+const FALLBACK_URL = "http://10.10.171.73:8080";
+const TWILIO_SERVICE_URL = "https://twilio-sms-service.onrender.com";
 
 // Use the expo public env variable if available, otherwise use the fallback
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || FALLBACK_URL;
