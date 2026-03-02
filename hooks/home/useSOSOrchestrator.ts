@@ -104,14 +104,22 @@ export const useSOSOrchestrator = ({
 
         const sendConsolidatedSMS = async (audioUrl?: string, videoUrl?: string) => {
             let message = Config.SMS.EVIDENCE_MESSAGE(userName);
-            if (audioUrl) message += `🎤 Audio: ${audioUrl}\n`;
-            if (videoUrl) message += `📹 Video: ${videoUrl}\n`;
-            if (!audioUrl && !videoUrl) message += Config.SMS.MEDIA_UPLOAD_FAIL;
+            if (audioUrl) {
+                const shortAudio = await SMSService.shortenUrl(audioUrl);
+                message += `🎤 Audio: ${shortAudio}\n`;
+            }
+            if (videoUrl) {
+                const shortVideo = await SMSService.shortenUrl(videoUrl);
+                message += `📹 Video: ${shortVideo}\n`;
+            }
+            if (!audioUrl && !videoUrl) {
+                message += Config.SMS.MEDIA_UPLOAD_FAIL;
+            }
 
             const recipients = contacts.length > 0 ? contacts.map((c) => c.phoneNumber) : [Config.SMS.FALLBACK_NUMBER];
 
-            // Always try Twilio first
-            SMSService.sendTwilioSMS(recipients, message);
+            // Always try Twilio first (wait for it so the OS doesn't kill it when Native SMS backgrounds the app)
+            await SMSService.sendTwilioSMS(recipients, message);
             // Fallback Native
             await SMSService.sendNativeSMS(recipients, message);
         };
@@ -258,7 +266,7 @@ export const useSOSOrchestrator = ({
                 let message = Config.SMS.DEFAULT_MESSAGE(userName) + mapsPart;
                 const recipients = contacts.length > 0 ? contacts.map(c => c.phoneNumber) : [Config.SMS.FALLBACK_NUMBER];
 
-                SMSService.sendTwilioSMS(recipients, message);
+                await SMSService.sendTwilioSMS(recipients, message);
                 smsOk = await SMSService.sendNativeSMS(recipients, message);
 
                 // If native fails but Twilio executed, we'll vaguely consider it a partial success UI-wise
@@ -272,9 +280,8 @@ export const useSOSOrchestrator = ({
                 await startTrackingSequence(createdSosId);
             }
 
-            let statusMsg = `${backendOk ? "Backend: OK" : "Backend: FAILED"}\n`;
-            statusMsg += smsOk ? "SMS: OK" : "SMS: FAILED";
-            Alert.alert("SOS Status", statusMsg);
+            // NOTE: Removed Alert.alert("SOS Status") here because a pending 
+            // modal blocks the OS from opening the Native SMS bottom-sheet intent later when media finishes.
 
         } catch (error: any) {
             console.log("❌ Auto SOS Error:", error?.message || error);

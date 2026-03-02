@@ -5,6 +5,16 @@ import { Config } from '../constants/Config';
 const TWILIO_SMS_URL = Config.endpoints.TWILIO_SMS;
 
 export const SMSService = {
+    async shortenUrl(url: string): Promise<string> {
+        try {
+            const res = await axios.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`, { timeout: 3000 });
+            return res.data;
+        } catch (e) {
+            console.log("⚠️ Failed to shorten URL, using original:", url);
+            return url;
+        }
+    },
+
     async sendTwilioSMS(recipients: string[], message: string): Promise<void> {
         console.log("🌐 Sending Twilio SMS to:", recipients);
 
@@ -23,24 +33,16 @@ export const SMSService = {
                 to: formattedPhone,
                 message: message
             }, {
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 5000 // 5 seconds max before giving up and going to Native SMS
             });
         });
 
         try {
             await Promise.all(promises);
             console.log("✅ Twilio SMS sent (all).");
-        } catch (error) {
-            console.log("❌ Twilio SMS Failed, retrying...");
-            // One-time retry after 2 seconds
-            setTimeout(async () => {
-                try {
-                    await Promise.all(promises);
-                    console.log("✅ Twilio SMS Retry Success.");
-                } catch (retryError) {
-                    console.log("❌ Twilio SMS Retry Failed.");
-                }
-            }, 2000);
+        } catch (error: any) {
+            console.log("❌ Twilio SMS Failed:", error?.message || "Timeout/Network Error");
         }
     },
 
@@ -54,7 +56,17 @@ export const SMSService = {
         }
 
         try {
-            const result = await SMS.sendSMSAsync(recipients, message);
+            // Android often hangs the promise when opening the Native SMS bottom sheet
+            // We use Promise.race to force-resolve after 5 seconds so the JS thread isn't blocked forever.
+            const timeoutPromise = new Promise<{ result: string }>((resolve) =>
+                setTimeout(() => resolve({ result: 'timeout_assumed_sent' }), 5000)
+            );
+
+            const result = await Promise.race([
+                SMS.sendSMSAsync(recipients, message),
+                timeoutPromise
+            ]);
+
             console.log("📩 Native SMS result:", result);
             return true;
         } catch (e: any) {

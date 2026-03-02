@@ -21,7 +21,7 @@ export const Config = {
     SMS: {
         FALLBACK_NUMBER: "+917906272840",
         DEFAULT_MESSAGE: (name?: string) => `🚨 EMERGENCY! ${name ? name + ' needs' : 'I need'} help.`,
-        EVIDENCE_MESSAGE: (name?: string) => `🚨 EMERGENCY EVIDENCE${name ? ` for ${name}` : ''}:\n`,
+        EVIDENCE_MESSAGE: (name?: string) => `🚨 EMERGENCY EVIDENCE${name ? ` for ${name}` : ''}:`,
         MEDIA_UPLOAD_FAIL: "Media upload failed or timed out.",
     },
     TIMEOUTS: {
