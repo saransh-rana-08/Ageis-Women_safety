@@ -1,50 +1,67 @@
-# Welcome to your Expo app 👋
+# Ageis: Women Safety Application
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Ageis is a life-critical emergency and women safety mobile application built with **React Native (Expo Bare Workflow)**. It is designed to act as an invisible shield, instantly reacting to emergencies by notifying trusted contacts with critical evidence and real-time location data.
 
-## Get started
+## Key Features
 
-1. Install dependencies
+- **Automated SOS Triggering**: Detects physical distress (like sudden shaking or drops) and automated voice commands to trigger SOS without touching the phone.
+- **Real-Time Location Tracking**: Instantly captures precise GPS coordinates and forwards them to emergency contacts via SMS alongside a Google Maps tracking link.
+- **Background Media Evidence**: Silently records audio (15s) and video (15s) evidence simultaneously during an emergency.
+- **Direct Cloudinary Integration**: Evidence is instantly and securely uploaded to Cloudinary directly from the device (using optimized FormData), completely bypassing backend relay delays. 
+- **Twilio & Native SMS Fallback**: Ensures SOS messages are reliably delivered. It fires a primary Twilio SMS and falls back on native on-device SMS payloads if the network is unstable.
+- **Personalized SOS Payloads**: Fetches and caches the user's profile to inject their real name into the emergency texts (`"🚨 EMERGENCY! [Name] needs help."`).
+- **Pre-SOS Automated Sequence & Siren**: A warning sequence featuring a loud alarm (with support for custom alarm sounds) that can deter potential threats before the deep SOS tracking engages.
 
+## Technology Stack
+
+- **Frontend**: React Native, Expo (SDK 54 - Bare Workflow), React Navigation v7
+- **Media Uploads**: Cloudinary
+- **Networking**: Axios, Fetch API (Multipart FormData)
+- **Local Storage**: AsyncStorage
+- **Sensors & Hardware**: Expo Camera, Expo AV (Audio), Expo Location, Expo Sensors (Accelerometer for shake detection)
+- **SMS Delivery**: Expo SMS (Native), Twilio (via backend)
+
+## Project Structure
+
+```text
+├── app/                  # Expo Router file-based navigation (Tabs, Profile, Login etc.)
+├── components/           # Reusable UI components
+├── constants/            # Global configs, Colors, CloudinaryConfig, API Endpoints
+├── context/              # Context providers (if applicable)
+├── hooks/home/           # Core SOS logic, Orchestrator, Audio/Video recording, Safe Words
+├── services/             # API clients: sosService (Cloudinary), smsService, contactService
+├── assets/               # Local static assets and default alarm sounds
+└── ... 
+```
+
+## Setup & Installation
+
+**Prerequisites:** Node.js, npm/bun/yarn, Android Studio (for Android emulation), and an Expo Go account.
+
+1. **Clone the repository:**
+   ```bash
+   git clone <https://github.com/saransh-rana-08/Ageis-Women_safety.git>
+   cd Ageis-Women_safety
+   ```
+
+2. **Install dependencies:**
    ```bash
    npm install
    ```
+   *(Note: This project relies on Expo SDK 54 features.)*
 
-2. Start the app
+3. **Configure Environment Variables:**
+   - Create a `.env` file or export variables.
+   - Set up your Cloudinary Unsigned Upload Preset and Cloud Name in `constants/CloudinaryConfig.ts`.
+   - Update `constants/Config.ts` if your auth or Twilio backend URLs differ from the defaults.
 
+4. **Start the development server:**
    ```bash
-   npx expo start
+   npm start
    ```
 
-In the output, you'll find options to open the app in a
+## Security & Privacy Notes
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- **Unsigned Uploads**: Cloudinary API keys and secrets are *never* bundled in the client code. Media is uploaded securely using Unsigned Presets.
+- **Local Caching**: The user's Auth token is stored in AsyncStorage and verified on mount to cache the user's name for instant availability during an emergency.
+- **Permissions Required**: The app requests Camera, Microphone, Foreground & Background Location, and SMS permissions to function properly.

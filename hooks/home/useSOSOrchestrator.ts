@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
@@ -47,6 +48,7 @@ export const useSOSOrchestrator = ({
     const [preSosActive, setPreSosActive] = useState(false);
     const [countdown, setCountdown] = useState(8);
     const [customAlarmUri, setCustomAlarmUri] = useState<string | null>(null);
+    const [userName, setUserName] = useState<string | undefined>(undefined);
 
     const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
     const soundRef = useRef<Audio.Sound | null>(null);
@@ -61,9 +63,24 @@ export const useSOSOrchestrator = ({
         sent?: boolean;
     }>({});
 
-    // Load custom alarm on mount
+    // Load custom alarm and User Profile on mount
     useEffect(() => {
         (async () => {
+            try {
+                // Fetch User Profile Name for SOS SMS personalization
+                const token = await AsyncStorage.getItem("token");
+                if (token) {
+                    const res = await axios.get(Config.endpoints.AUTH_ME, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    });
+                    if (res.data?.name) {
+                        setUserName(res.data.name);
+                    }
+                }
+            } catch (err) {
+                console.log("❌ Silent Profile fetch error in Orchestrator:", err);
+            }
+
             try {
                 const storedUri = await AsyncStorage.getItem("custom_alarm_uri");
                 if (storedUri) {
@@ -86,7 +103,7 @@ export const useSOSOrchestrator = ({
         if (sent) return;
 
         const sendConsolidatedSMS = async (audioUrl?: string, videoUrl?: string) => {
-            let message = Config.SMS.EVIDENCE_MESSAGE;
+            let message = Config.SMS.EVIDENCE_MESSAGE(userName);
             if (audioUrl) message += `🎤 Audio: ${audioUrl}\n`;
             if (videoUrl) message += `📹 Video: ${videoUrl}\n`;
             if (!audioUrl && !videoUrl) message += Config.SMS.MEDIA_UPLOAD_FAIL;
@@ -115,7 +132,7 @@ export const useSOSOrchestrator = ({
                 }
             }, Config.TIMEOUTS.MEDIA_UPLOAD_WAIT) as unknown as NodeJS.Timeout;
         }
-    }, [contacts]);
+    }, [contacts, userName]);
 
     // Handle Upload Callbacks
     const handleAudioUploaded = useCallback((url: string) => {
@@ -238,7 +255,7 @@ export const useSOSOrchestrator = ({
             // 3. Initial SMS (Location Only)
             if (latitude !== null && longitude !== null) {
                 let mapsPart = `\nMy Location:\nhttps://www.google.com/maps?q=${latitude},${longitude}`;
-                let message = Config.SMS.DEFAULT_MESSAGE + mapsPart;
+                let message = Config.SMS.DEFAULT_MESSAGE(userName) + mapsPart;
                 const recipients = contacts.length > 0 ? contacts.map(c => c.phoneNumber) : [Config.SMS.FALLBACK_NUMBER];
 
                 SMSService.sendTwilioSMS(recipients, message);
@@ -264,7 +281,7 @@ export const useSOSOrchestrator = ({
             Alert.alert("Error", "Failed to send SOS (unexpected error)");
         }
 
-    }, [tracking, preSosActive, contacts, startTrackingSequence]);
+    }, [tracking, preSosActive, contacts, userName, startTrackingSequence]);
 
 
     // PRE-SOS Automatically logic
