@@ -43,3 +43,19 @@ app-example
 /android
 
 .env
+
+# Gradle
+.gradle/
+**/.gradle/
+
+# Build outputs
+build/
+android/build/
+android/app/build/
+
+# Local config
+local.properties
+
+# OS junk
+.DS_Store
+Thumbs.db

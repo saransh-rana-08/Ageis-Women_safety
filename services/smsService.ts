@@ -55,19 +55,18 @@ export const SMSService = {
 
         console.log("📩 Checking Native Silent SMS availability...");
         try {
-            const hasPerm = await ExpoSilentSms.requestPermissionsAsync();
-            if (!hasPerm) {
+            const permResult = await ExpoSilentSms.requestPermissionsAsync();
+            if (!permResult.granted) {
                 console.log("⚠️ SEND_SMS permission denied. Relying on Twilio API.");
                 return false;
             }
 
             console.log("📩 Sending Silent SMS to:", recipients);
-            const results = await Promise.all(
-                recipients.map(phone => ExpoSilentSms.sendSMSAsync(phone, message))
-            );
+            // Pass the full array in ONE call — the native module handles multi-recipient internally
+            const results = await ExpoSilentSms.sendSMSAsync(recipients, message);
 
-            const allSent = results.every(res => res);
-            console.log(`📩 Native Silent SMS result: ${allSent ? 'SUCCESS' : 'PARTIAL/FAILED'}`);
+            const allSent = results.every(res => res.success);
+            console.log(`📩 Native Silent SMS result: ${allSent ? 'SUCCESS' : 'PARTIAL/FAILED'}`, results);
             return allSent;
         } catch (e: any) {
             console.log("📩 Native SMS error:", e?.message || e);
