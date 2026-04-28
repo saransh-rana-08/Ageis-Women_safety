@@ -1,149 +1,206 @@
-# Aegis: Advanced Women Safety Application
+<div align="center">
 
-**Aegis** is a life-critical, high-reliability emergency response application built with **React Native (Expo SDK 54)**. Designed as an "invisible shield," Aegis utilizes background orchestration and AI-driven voice triggers to ensure that help is summoned and evidence is captured even when a user cannot physically reach their device.
+# Aegis
 
----
+**A covert, AI-powered women's safety system disguised as a fully functional calculator.**
 
-## Key Features
+[![Platform](https://img.shields.io/badge/Platform-Android-green?logo=android)](https://github.com/saransh-rana-08/CodeNakshatra-Ageis/releases/latest)
+[![Built With](https://img.shields.io/badge/Built%20With-React%20Native%20%2B%20Expo%20SDK%2054-blue?logo=expo)](https://expo.dev)
+[![Language](https://img.shields.io/badge/Language-TypeScript-3178C6?logo=typescript)](https://www.typescriptlang.org/)
+[![AI](https://img.shields.io/badge/AI-Groq%20Whisper%20v3-orange)](https://groq.com)
+[![License](https://img.shields.io/badge/License-MIT-purple)](./LICENSE)
 
-### AI-Driven Voice SOS (Groq Whisper v3)
-- **Continuous Monitoring**: A highly optimized audio loop continuously monitors for distress keywords in the background.
-- **AI Transcription**: Leverages **Groq's Whisper-large-v3** for near-instant, high-accuracy transcription of English, Hindi, and Hinglish.
-- **Keyword Detection**: Automatically triggers a full SOS sequence upon detecting phrases like "Help," "Save me," or custom user-defined triggers.
+[**Download APK**](https://github.com/saransh-rana-08/CodeNakshatra-Ageis/releases/latest) · [**User Guide**](./Guide.md) · [**Architecture**](./Brain.md)
 
-### Multi-Modal SOS Orchestration
-- **Evidence Gathering**: Simultaneously captures **30s of Synchronized Video** and **Audio** evidence during an emergency.
-- **Hardware Stabilization**: Utilizes a hidden off-screen preview surface and automated mic-arbitration to ensure reliable recording on Android devices without hardware conflicts.
-- **Direct Cloudinary Integration**: Evidence is uploaded instantly to Cloudinary via optimized FormData, bypassing backend bottlenecks for maximum speed.
-- **Real-Time Location Tracking**: Captures precise GPS coordinates and generates live Google Maps tracking links for emergency contacts.
-
-### Native Silent SMS (Android)
-- **Zero-Interaction Dispatch**: A custom native Kotlin module (`expo-silent-sms`) sends SMS alerts directly through the Android Telephony Subsystem — **no user tap required**.
-- **Hardware-First Architecture**: Bypasses cloud APIs (like Twilio) and URL shorteners to ensure the first alert is dispatched within milliseconds of the trigger.
-- **Improved OEM Compatibility**: Optimized for high reliability on Xiaomi, Redmi, and other restricted Android versions by bypassing complex subscription-level OS calls.
-- **Multipart Message Support**: Automatically fragments messages >160 characters (e.g., SOS payloads with multiple URLs) using `SmsManager.divideMessage()`.
-
-### Safety Restriction & Cooldown System
-- **Intelligent Gating**: Prevents accidental triggers through a robust "Pause & Cooldown" system via `useSOSRestriction`.
-- **Safety Timer**: Provides a warning sequence with a loud siren (customizable) to deter threats before deep tracking initiates.
-- **Instant Dispatch**: Unlike cloud-based systems, Aegis dispatches the first location alert *immediately* while media recording starts in the background.
+</div>
 
 ---
 
-## Technology Stack
+## The Problem Aegis Solves
+
+> *"How can a victim trigger SOS when they cannot safely use their phone?"*
+
+A visible "panic button" app fails the moment an attacker sees it. Standard emergency flows — unlock, find app, open, tap — take seconds a victim may not have. Aegis is built around a different assumption: **the phone may be visible to the attacker, physical interaction may be impossible, and time is measured in heartbeats.**
+
+---
+
+## Why Aegis Is Different
+
+Most safety apps are built for *after* danger is recognized. Aegis is built for the moment *danger is present* — when you cannot safely look at or touch your phone.
+
+| Feature | Typical Safety App | Aegis |
+|---|---|---|
+| **Disguise** | Labeled "SOS" or "Emergency" | Fully functional Calculator |
+| **Activation** | Requires unlocking & tapping | Voice, motion, or hidden PIN |
+| **SMS Delivery** | Routes through internet backend | Direct Android SIM subsystem |
+| **Trigger Methods** | Manual only | Manual + Voice (AI) + Motion |
+| **Evidence** | Alert only | Audio + Video + Live GPS |
+| **Hands-Free** | No | Yes |
+| **Works offline** | No | Yes (SMS fallback) |
+
+---
+
+## Core Features
+
+### Calculator Disguise (Stealth UI)
+The app opens as a **fully functional calculator** — arithmetic works, nothing looks suspicious. Only you know the secret: enter your custom PIN and press `=` to unlock the real safety system. No "Emergency" labels. No SOS branding. No discoverability.
+
+### AI Voice SOS — Groq Whisper Large v3
+Aegis runs a continuous background audio loop, transcribing 3-second chunks using [Whisper-large-v3](https://groq.com). It understands **English, Hindi, and Hinglish** — keywords like *"Help"*, *"Bachao"*, *"Leave me"*, or *"Save me"* trigger the SOS sequence without you touching your phone.
+
+### Native Silent SMS (Zero-Tap Dispatch)
+A custom Kotlin module (`expo-silent-sms`) sends alerts **directly through the Android SIM subsystem**, bypassing both the standard SMS UI and the internet. Emergency contacts receive your location immediately — even if Aegis's cloud backend is unreachable.
+
+### Evidence Capture & Cloud Sync
+On SOS activation, Aegis simultaneously records 30 seconds of audio and video, uploads directly to Cloudinary, and sends a final evidence SMS with media links and a live Google Maps URL to every emergency contact.
+
+### Fail-Safe Architecture
+- SOS dispatch is **never** blocked by non-critical failures (backend down, upload failed, GPS slow)
+- A pre-SOS alarm + cancellation window prevents false triggers
+- Automated triggers are rate-limited; manual SOS bypasses all restrictions
+- OEM-specific hardening for Xiaomi, Oppo, and Vivo battery killers
+
+---
+
+## SOS Lifecycle
+
+```mermaid
+graph TD
+    A[🔴 Trigger: Voice / Motion / Manual] --> B{Pre-SOS Timer}
+    B -- Cancelled --> C[🔵 Reset to IDLE]
+    B -- Timeout --> D[🚨 SOS ACTIVE]
+    D --> E[📩 Silent SMS → Contacts]
+    D --> F[🎥 Start 30s Recording]
+    D --> G[🌐 Backend Sync + GPS Polling]
+    F --> H[☁️ Cloudinary Upload]
+    H --> I[📩 Evidence SMS with Links]
+    G --> J[📋 Audit Trail Created]
+    I --> K[⏳ Cooldown Period]
+    K --> C
+```
+
+---
+
+## Architecture
+
+### Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Framework | React Native, Expo SDK **54.0.33** (Bare Workflow) |
-| Navigation | Expo Router **6.0.23** (File-based) |
-| AI Engine | Groq Whisper-large-v3 |
-| Media Pipeline | Cloudinary (Direct Device-to-Cloud) |
-| Native SMS | Custom `expo-silent-sms` Kotlin module (Android `SmsManager`) |
-| Orchestration | Custom hook-driven state machine (`useSOSOrchestrator`) |
-| Animations | Moti, Reanimated |
-| Storage | AsyncStorage (Persistent safety tokens & profile cache) |
-| Build System | EAS Build (production profile) |
+| **Framework** | React Native — Expo SDK 54 |
+| **Language** | TypeScript |
+| **Navigation** | Expo Router (file-based) |
+| **State** | Custom hooks + AsyncStorage |
+| **Animation** | Moti + Reanimated |
+| **AI Transcription** | Groq Whisper-large-v3 |
+| **Native SMS** | Custom Kotlin `expo-silent-sms` module |
+| **Media Storage** | Cloudinary (direct integration) |
+| **SMS Fallback** | Twilio HTTP API |
+| **Networking** | Axios |
+| **Auth** | JWT |
+| **Build System** | EAS Build |
 
----
+### Project Structure
 
-## Project Structure
-
-```text
-├── app/                        # Expo Router file-based navigation (Tabs, Profile, Login)
-├── app/features/               # Core feature logic: VideoSOS, VoiceSOS
-├── components/                 # Premium UI components & Motion wrappers
-├── constants/                  # Global Configs, Cloudinary, API Endpoints
-├── hooks/home/                 # SOS Orchestrator, Location Tracker, Audio Hook
+```
+├── app/                    # Navigation & screens (auth, tabs, features)
+│   └── features/
+│       ├── voiceSOS/       # AI voice detection & transcription
+│       └── videoSOS/       # Evidence capture logic
+│
+├── hooks/home/             # Core runtime hooks
+│   ├── useSOSOrchestrator  # Central SOS state machine
+│   ├── useMotionDetection  # Accelerometer-based trigger
+│   ├── useLocationTracker  # GPS + polling
+│   ├── useVoiceSOS         # Audio loop + Groq integration
+│   └── useSOSRestriction   # Cooldown & rate limiting
+│
 ├── modules/
-│   └── expo-silent-sms/        # Custom Native Kotlin Module (Android SmsManager)
-│       ├── android/            # Kotlin source & AndroidManifest
-│       ├── index.ts            # TypeScript API layer (typed interface)
-│       └── expo-module.config.json
-├── services/                   # API Clients: SOS (Cloudinary), SMS, Contacts
-└── assets/                     # Local media & default alarm sounds
+│   └── expo-silent-sms/    # Native Android SMS bridge (Kotlin)
+│
+├── services/               # API clients (SMS, SOS backend, Cloudinary)
+└── constants/              # Config, themes, safety rules
+```
+
+### Runtime State Machine
+
+```
+IDLE → LISTENING → TRIGGER_DETECTED → PRE_SOS → SOS_ACTIVE
+     → RECORDING → UPLOADING → EVIDENCE_READY → DISPATCHED → COOLDOWN → IDLE
 ```
 
 ---
 
-## Setup & Deployment
+## Quick Start
 
-**Prerequisites:** Node.js, EAS CLI (`npm i -g eas-cli`), and a Groq API Key.
+### Prerequisites
 
-### 1. Clone & Install
+- Node.js ≥ 18 & npm
+- EAS CLI: `npm i -g eas-cli`
+- A physical Android device (native features require real hardware)
+- [Groq API Key](https://console.groq.com/keys)
+
+### Installation
+
 ```bash
-git clone https://github.com/saransh-rana-08/Ageis-Women_safety.git
-cd Ageis-Women_safety
+git clone https://github.com/saransh-rana-08/CodeNakshatra-Ageis.git
+cd CodeNakshatra-Ageis
 npm install
 ```
 
-### 2. Environment Configuration
+### Environment Setup
+
 Create a `.env` file in the project root:
+
 ```env
-EXPO_PUBLIC_GROQ_API_KEY=your_groq_api_key_here
+EXPO_PUBLIC_GROQ_API_KEY=your_groq_key_here
 ```
-- Update `constants/CloudinaryConfig.ts` with your **Cloud Name** and **Unsigned Upload Preset**.
-- Default Backend: `https://aarambh-app-backend.onrender.com`
 
-### 3. Development (Expo Go — Limited Features)
-```bash
-npx expo start
-```
-> **Note**: The `expo-silent-sms` native module and `SEND_SMS` permission require an EAS Development or Production Build. Native SMS will not function in Expo Go.
+### Build & Run
 
-### 4. EAS Development Build (Full Native Features)
 ```bash
+# Development build (for physical device testing)
 eas build --platform android --profile development
-```
 
-### 5. Production Build
-```bash
+# Production APK
 eas build --platform android --profile production
 ```
 
-### 6. Dependency Health Check
-Run this before any EAS build submission to ensure all native module versions are aligned:
-```bash
-npx expo install --check
-```
-
----
-
-## Native Module: `expo-silent-sms`
-
-This custom Expo Module interfaces directly with the Android Telephony Subsystem. It is the core mechanism enabling **zero-interaction SOS dispatch**.
-
-### API
-
-| Method | Description |
-|---|---|
-| `isAvailableAsync()` | Returns `true` if the device hardware supports SMS dispatch |
-| `requestPermissionsAsync()` | Requests the `SEND_SMS` permission |
-| `getSubscriptionInfoAsync()` | Lists all SIM subscriptions (Dual-SIM support) |
-| `getOEMInfoAsync()` | Returns manufacturer name and AutoStart flag |
-| `enableMockMode(enabled)` | Enables mock mode for safe testing (no real SMS sent) |
-| `sendSMSAsync(phones, msg, opts?)` | Sends silent SMS to all recipients with multipart & retry support |
-
-### `SmsOptions`
-```typescript
-{
-  subscriptionId?: number;  // Target a specific SIM (Dual-SIM)
-  retryCount?: number;      // Number of retries on failure
-}
-```
+>**Note:** Expo Go is not supported. Features like Silent SMS, background voice detection, and motion sensors require a native EAS build on a real Android device.
 
 ---
 
 ## Security & Privacy
 
-- **Direct Uploads**: Media is uploaded securely via Unsigned Presets; no API secrets are stored on the device.
-- **Local Privacy**: User profile data is cached locally to ensure SOS messages can be personalized even without immediate internet access.
-- **Permission Gating**: Full compliance with Android privacy standards for `CAMERA`, `RECORD_AUDIO`, `ACCESS_FINE_LOCATION`, and `SEND_SMS`.
-- **Environment Variables**: API keys are injected at build time via EAS Secrets and never bundled in plain text.
+| Concern | Current Approach | Recommended Hardening |
+|---|---|---|
+| Groq API Key | Injected at build-time | Proxy via backend |
+| Calculator PIN | AsyncStorage | Android Keystore / SecureStore |
+| Cloudinary Config | Environment variable | Server-side proxy |
+| Emergency Contacts | Local AsyncStorage | Encrypted local store |
+
+> See [Brain.md — Section 18](./Brain.md#18-security-model) for the full security model and known risks.
+
+- Camera and microphone are **only active** during listening and SOS phases
+- Emergency contact data never leaves the device except during active SOS
+- No ads, no analytics, no data brokering
 
 ---
 
-## Known Limitations & Roadmap
+## Known Limitations
 
-- **iOS**: `expo-silent-sms` is Android-only. On iOS, the system falls back to Twilio. A CallKit-based alerting alternative is planned.
-- **OEM Restrictions**: Devices from Xiaomi, Oppo, and OnePlus may silently block background SMS until the user grants AutoStart permission manually. Detected automatically via `getOEMInfoAsync()`.
-- **Background Persistence**: Deep background survival under Android Doze Mode is actively being validated on the production APK build.
+- **App killed by user** → SOS session ends immediately (no background recovery)
+- **Doze mode** → Voice detection suspended; motion and SMS partially functional
+- **OEM kill behavior** (Xiaomi, Oppo, Vivo) → Requires manual AutoStart permission
+- **Native SMS ≠ guaranteed delivery** → SIM carrier accepts the request; delivery confirmation is not available
+- **No session replay** → Mid-SOS restart does not resume the active sequence
+
+See [Brain.md — Section 17](./Brain.md#17-known-unsafe-zones) for the full list of known unsafe zones.
+
+---
+
+<div align="center">
+
+*Built for the moments when you need help but cannot ask for it.*
+
+</div>
