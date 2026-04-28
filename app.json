@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "Aegis",
-    "slug": "aegis",
+    "name": "Calculator",
+    "slug": "calculator",
+    "owner": "ezmanish",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -33,7 +34,7 @@
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
         "android.permission.ACCESS_MEDIA_LOCATION"
       ],
-      "package": "com.theroyal_30.womensafetyapp"
+      "package": "com.ezmanish.calculator"
     },
     "web": {
       "output": "static",
@@ -83,7 +84,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "926e6461-723c-4ed9-a9ff-feaf4cdda6b8"
+        "projectId": "c827b491-0f87-4c39-807a-931009037534"
       }
     }
   }

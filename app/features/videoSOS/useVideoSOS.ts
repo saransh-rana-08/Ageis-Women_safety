@@ -8,7 +8,8 @@ export const useVideoSOS = (options?: { onRecordingFinished?: (uri: string) => v
     // const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions(); // ❌ Causes crash on Expo Go if Audio perm missing
     const [isRecording, setIsRecording] = useState(false);
     const cameraRef = useRef<CameraView>(null);
-    const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const recordingStartTimestamp = useRef<number>(0);
+    const stopRequestedRef = useRef(false);
 
     const startRecording = useCallback(async () => {
         if (!permission?.granted) {
@@ -19,7 +20,6 @@ export const useVideoSOS = (options?: { onRecordingFinished?: (uri: string) => v
             }
         }
 
-        // 🟢 Fix: Request WRITE-ONLY permission to avoid "READ_MEDIA_AUDIO" error
         const mediaPerm = await MediaLibrary.requestPermissionsAsync(true);
         if (!mediaPerm.granted) {
             Alert.alert("Permission Required", "Gallery access is needed to save video.");
@@ -29,41 +29,49 @@ export const useVideoSOS = (options?: { onRecordingFinished?: (uri: string) => v
         if (cameraRef.current && !isRecording) {
             try {
                 setIsRecording(true);
+                stopRequestedRef.current = false;
+                recordingStartTimestamp.current = Date.now();
                 console.log("[VideoSOS] Starting recording...");
 
                 const videoPromise = cameraRef.current.recordAsync({
-                    maxDuration: 15, // Stop automatically after 15s
+                    maxDuration: 20,
                 });
 
-                // Save reference to stop it manually if needed
-                // Note: recordAsync awaits until recording stops
-                videoPromise.then(async (data) => {
-                    console.log("[VideoSOS] Recording finished:", data?.uri);
+                videoPromise.then(async (data: any) => {
+                    if (!data?.uri) {
+                        console.log("[VideoSOS] Recording finished but NO URI returned. Notifying orchestrator...");
+                        setIsRecording(false);
+                        if (options?.onRecordingFinished) {
+                            options.onRecordingFinished(""); 
+                        }
+                        return;
+                    }
+                    console.log("[VideoSOS] Recording finished:", data.uri);
                     setIsRecording(false);
-                    if (data?.uri) {
-                        try {
-                            await MediaLibrary.saveToLibraryAsync(data.uri);
-                            console.log("[VideoSOS] Video saved to gallery.");
+                    try {
+                        await MediaLibrary.saveToLibraryAsync(data.uri);
+                        console.log("[VideoSOS] Video saved to gallery.");
 
-                            // Upload to Backend
-                            console.log("[VideoSOS] Uploading video to Cloudinary...");
-                            // We need to import SOSService dynamically or at the top
-                            const { SOSService } = require('../../../services/sosService');
-                            const uploadedUrl = await SOSService.uploadMedia(data.uri, 'video');
-                            console.log("[VideoSOS] Upload success:", uploadedUrl);
+                        console.log("[VideoSOS] Uploading video to Cloudinary...");
+                        const { SOSService } = require('../../../services/sosService');
+                        const uploadedUrl = await SOSService.uploadMedia(data.uri, 'video');
+                        console.log("[VideoSOS] Upload success:", uploadedUrl);
 
-                            // 🟢 Callback to parent with the ONLINE URL, not the local URI
-                            if (options?.onRecordingFinished) {
-                                options.onRecordingFinished(uploadedUrl);
-                            }
-
-                        } catch (e) {
-                            console.error("[VideoSOS] Failed to save/upload video:", e);
+                        if (options?.onRecordingFinished) {
+                            options.onRecordingFinished(uploadedUrl);
+                        }
+                    } catch (e) {
+                        console.error("[VideoSOS] Failed to save/upload video:", e);
+                        if (options?.onRecordingFinished) {
+                            options.onRecordingFinished(""); 
                         }
                     }
-                }).catch(e => {
+                }).catch((e: any) => {
                     console.error("[VideoSOS] Recording error:", e);
                     setIsRecording(false);
+                    if (options?.onRecordingFinished) {
+                        options.onRecordingFinished(""); 
+                    }
                 });
 
             } catch (error) {
@@ -75,9 +83,27 @@ export const useVideoSOS = (options?: { onRecordingFinished?: (uri: string) => v
 
     const stopRecording = useCallback(() => {
         if (cameraRef.current && isRecording) {
+            const elapsed = Date.now() - recordingStartTimestamp.current;
+            
+            // 🚨 FIX: Minimum 3 seconds of recording to prevent "Unknown error" on Android
+            if (elapsed < 3000) {
+                console.log(`[VideoSOS] Stop requested too early (${elapsed}ms). Waiting for minimum duration...`);
+                stopRequestedRef.current = true;
+                setTimeout(() => {
+                    if (stopRequestedRef.current) {
+                        console.log("[VideoSOS] Executing deferred stop...");
+                        cameraRef.current?.stopRecording();
+                        setIsRecording(false);
+                        stopRequestedRef.current = false;
+                    }
+                }, 3000 - elapsed);
+                return;
+            }
+
             console.log("[VideoSOS] Stopping recording manually...");
             cameraRef.current.stopRecording();
             setIsRecording(false);
+            stopRequestedRef.current = false;
         }
     }, [isRecording]);
 

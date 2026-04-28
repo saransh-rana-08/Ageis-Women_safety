@@ -10,16 +10,16 @@ export const useLocationTracker = () => {
 
     const sendLocationUpdate = useCallback(async () => {
         const sosId = currentSosIdRef.current;
-        if (!sosId) return;
+        // Don't sync location if we don't have a valid ID yet (placeholder is -1)
+        if (!sosId || sosId === -1) return;
 
         try {
             const loc = await Location.getCurrentPositionAsync({});
             const { latitude, longitude } = loc.coords;
 
             await SOSService.updateLocation(sosId, latitude, longitude);
-            // console.log("📍 Continuous location update sent:", latitude, longitude);
         } catch (err: any) {
-            console.log("❌ Failed to send update location:", err?.message || err);
+            // Silence log to avoid terminal spam when backend is slow
         }
     }, []);
 

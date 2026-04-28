@@ -228,9 +228,16 @@ export default function HomeScreen() {
         deleteSafeWord={deleteSafeWord}
       />
 
-      {/* Hidden Camera View for Recording */}
-      <View style={{ height: 1, width: 1, overflow: 'hidden', opacity: 0 }}>
-        <CameraView ref={cameraRef} style={{ flex: 1 }} mode="video" facing="back" mute={false} />
+      {/* Hidden Camera View for Recording - Absolute positioned off-screen to satisfy Android hardware requirements */}
+      <View style={{ 
+        position: 'absolute', 
+        left: -1000, 
+        top: -1000, 
+        width: 100, 
+        height: 100, 
+        overflow: 'hidden' 
+      }}>
+        <CameraView ref={cameraRef} style={{ flex: 1 }} mode="video" facing="back" mute={true} />
       </View>
     </ScrollView>
   );

@@ -49,7 +49,7 @@ export const SMSService = {
 
     async sendNativeSMS(recipients: string[], message: string): Promise<boolean> {
         if (Platform.OS !== 'android') {
-            console.log("⚠️ Native Silent SMS is only supported on Android. Relying on Twilio.");
+            console.log("⚠️ Native Silent SMS is only supported on Android.");
             return false;
         }
 
@@ -57,19 +57,29 @@ export const SMSService = {
         try {
             const permResult = await ExpoSilentSms.requestPermissionsAsync();
             if (!permResult.granted) {
-                console.log("⚠️ SEND_SMS permission denied. Relying on Twilio API.");
+                console.log("⚠️ SEND_SMS permission denied.");
                 return false;
             }
 
             console.log("📩 Sending Silent SMS to:", recipients);
-            // Pass the full array in ONE call — the native module handles multi-recipient internally
-            const results = await ExpoSilentSms.sendSMSAsync(recipients, message);
+            const results = await ExpoSilentSms.sendSMSAsync(recipients, message, { retryCount: 1 });
 
-            const allSent = results.every(res => res.success);
-            console.log(`📩 Native Silent SMS result: ${allSent ? 'SUCCESS' : 'PARTIAL/FAILED'}`, results);
+            const allSent = results.every((res: any) => res.success);
+            
+            if (allSent) {
+                console.log("✅ Native Silent SMS sent successfully to all recipients.");
+            } else {
+                results.forEach((res: any) => {
+                    if (!res.success) {
+                        console.log(`❌ Native SMS failed for ${res.phoneNumber}:`);
+                        console.log(`   ↳ error: "${res.error}"`);
+                        console.log(`   ↳ sent: ${res.sent}, delivered: ${res.delivered}`);
+                    }
+                });
+            }
             return allSent;
         } catch (e: any) {
-            console.log("📩 Native SMS error:", e?.message || e);
+            console.log("📩 Native SMS module threw an exception:", e?.message || e);
             return false;
         }
     }

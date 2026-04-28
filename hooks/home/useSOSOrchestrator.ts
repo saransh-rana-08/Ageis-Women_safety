@@ -63,6 +63,7 @@ export const useSOSOrchestrator = ({
     const mediaUploadsRef = useRef<{
         audio?: string;
         video?: string;
+        videoDone?: boolean;  // true when video is complete (even if it failed)
         timer?: NodeJS.Timeout;
         sent?: boolean;
     }>({});
@@ -103,18 +104,33 @@ export const useSOSOrchestrator = ({
 
     // Helper: Consolidated SMS
     const checkAndSendSMS = useCallback(async () => {
-        const { audio, video, sent } = mediaUploadsRef.current;
-        if (sent) return;
+        // 1. Double-gate: check both the persistent 'sent' flag AND a local 'isSending' lock
+        if (mediaUploadsRef.current.sent) return;
+
+        const { audio, video } = mediaUploadsRef.current;
 
         const sendConsolidatedSMS = async (audioUrl?: string, videoUrl?: string) => {
+            // SECOND GATE: Re-check inside the async block
+            if (mediaUploadsRef.current.sent) return;
+            
+            // IMMEDIATE MARKING: Stop any other parallel flows from reaching this point
+            mediaUploadsRef.current.sent = true;
+            if (mediaUploadsRef.current.timer) {
+                clearTimeout(mediaUploadsRef.current.timer);
+                mediaUploadsRef.current.timer = undefined;
+            }
+
+            // Small delay to ensure file write is truly flushed on disk before SMS attempt
+            await new Promise(res => setTimeout(res, 2000));
+
+            console.log("📨 Dispatching consolidated SOS SMS via Hardware...");
+
             let message = Config.SMS.EVIDENCE_MESSAGE(userName);
             if (audioUrl) {
-                const shortAudio = await SMSService.shortenUrl(audioUrl);
-                message += `🎤 Audio: ${shortAudio}\n`;
+                message += `🎤 Audio: ${audioUrl}\n`;
             }
             if (videoUrl) {
-                const shortVideo = await SMSService.shortenUrl(videoUrl);
-                message += `📹 Video: ${shortVideo}\n`;
+                message += `📹 Video: ${videoUrl}\n`;
             }
             if (!audioUrl && !videoUrl) {
                 message += Config.SMS.MEDIA_UPLOAD_FAIL;
@@ -122,25 +138,39 @@ export const useSOSOrchestrator = ({
 
             const recipients = contacts.length > 0 ? contacts.map((c) => c.phoneNumber) : [Config.SMS.FALLBACK_NUMBER];
 
-            // Always try Twilio first (wait for it so the OS doesn't kill it when Native SMS backgrounds the app)
-            await SMSService.sendTwilioSMS(recipients, message);
-            // Fallback Native
-            await SMSService.sendNativeSMS(recipients, message);
+            try {
+                // HARDWARE ONLY: Using Native Silent SMS
+                const nativeOk = await SMSService.sendNativeSMS(recipients, message);
+                
+                if (nativeOk) {
+                    console.log("✅ Consolidated SOS SMS dispatch complete via Native.");
+                } else {
+                    console.log("❌ Consolidated SMS dispatch failed on hardware.");
+                }
+            } catch (err) {
+                console.log("❌ Consolidated SMS dispatch error:", err);
+            } finally {
+                isProcessingAutoSOS.current = false;
+            }
         };
 
-        if (audio && video) {
-            if (mediaUploadsRef.current.timer) clearTimeout(mediaUploadsRef.current.timer);
+        // Fire immediately if:
+        // - Both audio AND video URL are available (best case)
+        // - Audio is ready AND video has been reported done (even if failed)
+        const bothDone = (audio && video) || (audio && mediaUploadsRef.current.videoDone);
+        if (bothDone) {
             await sendConsolidatedSMS(audio, video);
-            mediaUploadsRef.current.sent = true;
             return;
         }
 
+        // If only one is ready, wait for the other OR timeout
         if (!mediaUploadsRef.current.timer) {
+            console.log("⏳ One media asset ready, waiting for others or timeout...");
             mediaUploadsRef.current.timer = setTimeout(async () => {
                 const { audio: finalAudio, video: finalVideo, sent: finalSent } = mediaUploadsRef.current;
                 if (!finalSent) {
+                    console.log("⏰ Media timeout reached, sending partial evidence...");
                     await sendConsolidatedSMS(finalAudio, finalVideo);
-                    mediaUploadsRef.current.sent = true;
                 }
             }, Config.TIMEOUTS.MEDIA_UPLOAD_WAIT) as unknown as NodeJS.Timeout;
         }
@@ -153,7 +183,14 @@ export const useSOSOrchestrator = ({
     }, [checkAndSendSMS]);
 
     const handleVideoUploaded = useCallback((url: string) => {
-        mediaUploadsRef.current.video = url;
+        mediaUploadsRef.current.videoDone = true;  // Mark video as complete regardless of outcome
+        if (url) {
+            mediaUploadsRef.current.video = url;
+            console.log("📹 Video URL ready:", url);
+        } else {
+            mediaUploadsRef.current.video = undefined;
+            console.log("📹 Video failed/empty — will send audio-only evidence SMS");
+        }
         checkAndSendSMS();
     }, [checkAndSendSMS]);
 
@@ -170,7 +207,7 @@ export const useSOSOrchestrator = ({
         // Stop Location
         stopLocationTracking();
 
-        Alert.alert("SOS Stopped", "Tracking and recording have been stopped.");
+        console.log("✅ SOS tracking stopped.");
     }, [stopRecording, stopVideoRecording, stopLocationTracking, currentSosIdRef, handleAudioUploaded]);
 
     const startTrackingSequence = useCallback(async (alertId: number) => {
@@ -179,7 +216,7 @@ export const useSOSOrchestrator = ({
         // Stop Voice Listener explicitly to release mic
         stopListening();
 
-        mediaUploadsRef.current = { sent: false };
+        mediaUploadsRef.current = { sent: false, videoDone: false };
 
         // Start Media Recording
         await startRecording();
@@ -201,11 +238,11 @@ export const useSOSOrchestrator = ({
         // Start Location Tracking
         startLocationTracking(alertId);
 
-        // Safety Timeout (e.g. 20s)
+        // Safety Timeout (e.g. 45s)
         safetyTimerRef.current = setTimeout(() => {
             console.log("⏰ Safety timeout reached. Stopping SOS main tracking flow...");
             stopTracking();
-        }, Config.TIMEOUTS.SAFETY_TIMEOUT) as unknown as NodeJS.Timeout;
+        }, 45000) as unknown as NodeJS.Timeout;
 
     }, [
         cameraPermission, requestCameraPermission, startRecording, startVideoRecording,
@@ -213,11 +250,15 @@ export const useSOSOrchestrator = ({
         handleAudioUploaded, stopTracking
     ]);
 
+    const isProcessingAutoSOS = useRef(false);
+
     const triggerAutoSOS = useCallback(async () => {
-        if (tracking) {
-            Alert.alert("SOS already active", "Stop current SOS before starting a new one.");
+        if (tracking || cooldown || isProcessingAutoSOS.current) {
+            console.log("⚠️ SOS or Cooldown already active. Ignoring trigger.");
             return;
         }
+
+        isProcessingAutoSOS.current = true;
 
         // Force cleanup of Pre-SOS
         if (preSosActive || countdownTimerRef.current) {
@@ -248,6 +289,7 @@ export const useSOSOrchestrator = ({
             let { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== "granted") {
                 Alert.alert("Permission denied", "Location is required to send an SOS.");
+                isProcessingAutoSOS.current = false;
                 return;
             }
 
@@ -255,44 +297,44 @@ export const useSOSOrchestrator = ({
             latitude = loc.coords.latitude;
             longitude = loc.coords.longitude;
 
-            // 2. Initial Backend API
-            try {
-                const response = await SOSService.triggerSOS(latitude, longitude);
-                backendOk = true;
-                createdSosId = response.id;
-            } catch (err: any) {
-                console.log("❌ Initial Backend error:", err?.message || err);
-            }
-
-            // 3. Initial SMS (Location Only)
+            // 2. Initial SMS (Location Only) - NON-BLOCKING
             if (latitude !== null && longitude !== null) {
                 let mapsPart = `\nMy Location:\nhttps://www.google.com/maps?q=${latitude},${longitude}`;
                 let message = Config.SMS.DEFAULT_MESSAGE(userName) + mapsPart;
                 const recipients = contacts.length > 0 ? contacts.map(c => c.phoneNumber) : [Config.SMS.FALLBACK_NUMBER];
 
-                await SMSService.sendTwilioSMS(recipients, message);
-                smsOk = await SMSService.sendNativeSMS(recipients, message);
-
-                // If native fails but Twilio executed, we'll vaguely consider it a partial success UI-wise
-                if (!smsOk) smsOk = true; // because Twilio fired
+                console.log("📩 Triggering initial alert in background (Hardware Only)...");
+                (async () => {
+                    try {
+                        await SMSService.sendNativeSMS(recipients, message);
+                    } catch (e) {
+                        console.log("❌ Initial background SMS failed:", e);
+                    }
+                })();
             }
 
-            setLastSOS({ time: new Date().toLocaleTimeString(), backendOk, smsOk });
+            // 3. Start Recording & Tracking IMMEDIATELY
+            console.log("📹 Launching recording & deep tracking...");
+            startTrackingSequence(-1); // Start with dummy ID while waiting for backend
 
-            // 4. Start Deep Tracking
-            if (backendOk && createdSosId !== null) {
-                await startTrackingSequence(createdSosId);
+            // 4. Backend API Sync (Background)
+            try {
+                const response = await SOSService.triggerSOS(latitude, longitude);
+                backendOk = true;
+                createdSosId = response.id;
+                currentSosIdRef.current = response.id; // Update ref for the already running tracking
+            } catch (err: any) {
+                console.log("❌ Backend Sync error (will continue recording regardless):", err?.message || err);
             }
 
-            // NOTE: Removed Alert.alert("SOS Status") here because a pending 
-            // modal blocks the OS from opening the Native SMS bottom-sheet intent later when media finishes.
+            setLastSOS({ time: new Date().toLocaleTimeString(), backendOk, smsOk: true });
 
         } catch (error: any) {
             console.log("❌ Auto SOS Error:", error?.message || error);
-            Alert.alert("Error", "Failed to send SOS (unexpected error)");
+            isProcessingAutoSOS.current = false;
         }
 
-    }, [tracking, preSosActive, contacts, userName, startTrackingSequence]);
+    }, [tracking, cooldown, preSosActive, contacts, userName, startTrackingSequence]);
 
 
     // PRE-SOS Automatically logic
@@ -315,7 +357,7 @@ export const useSOSOrchestrator = ({
     }, [stopListening, triggerAutoSOS, restriction]);
 
     const startAutomatedSequence = useCallback(async () => {
-        if (preSosActive || tracking) return;
+        if (preSosActive || tracking || isProcessingAutoSOS.current) return;
 
         // ── Safety Restriction Gate (automated triggers only) ──────────────────
         const { allowed, reason } = restriction.isSOSAllowed();
@@ -389,6 +431,7 @@ export const useSOSOrchestrator = ({
 
         setPreSosActive(false);
         setCountdown(restriction.sosCountdownSecs);
+        isProcessingAutoSOS.current = false;
         Alert.alert("Cancelled", "Emergency SOS cancelled. You are safe.");
     }, []);
 
